@@ -1,6 +1,6 @@
 services:
   health-receiver:
-    build: .
+    image: dzarlax/health_dashboard:latest
     ports:
       - "8080:8080"
     volumes:
@@ -14,7 +14,7 @@ services:
   # Downsampling: runs daily at 03:00, aggregates old data to reduce DB size.
   # To disable: comment out this entire downsample block.
   downsample:
-    build: .
+    image: dzarlax/health_dashboard:latest
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |

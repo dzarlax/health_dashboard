@@ -15,17 +15,19 @@ Data is stored in two layers:
 ## Quick Start
 
 ```bash
-git clone <repo>
-cd health_processing
+# Download docker-compose.yml
+curl -O https://raw.githubusercontent.com/dzarlax/health_dashboard/main/docker-compose.yml
 
-# Copy and edit config
-cp docker-compose.yml docker-compose.override.yml
-# Edit docker-compose.override.yml — set API_KEY and UI_PASSWORD
+# Set secrets (edit the file or use environment variables)
+# API_KEY=your-secret-key
+# UI_PASSWORD=your-dashboard-password
 
 docker compose up -d
 ```
 
 Web UI will be available at `http://your-server:8080/`.
+
+The image is published on Docker Hub: [`dzarlax/health_dashboard`](https://hub.docker.com/r/dzarlax/health_dashboard).
 
 ## Configuration
 
