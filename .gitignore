@@ -1,0 +1,22 @@
+# Database
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Compiled binaries
+bin/
+migrate
+downsample
+server
+
+# Claude Code
+.claude/
+
+# Environment files
+.env
+.env.*
+docker-compose.override.yml
+
+# macOS
+.DS_Store
