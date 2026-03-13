@@ -55,7 +55,14 @@ var I18N = {
     lbl_total:'Total', lbl_deep:'Deep', lbl_core:'Core',
     how_it_works:'How it works',
     health_sections:'Health overview',
-    at_a_glance:'At a glance'
+    at_a_glance:'At a glance',
+    admin_title:'Settings', admin_cache_status:'Cache status', admin_actions:'Actions',
+    admin_raw:'Raw data', admin_minute:'Minute cache', admin_hourly:'Hourly cache', admin_daily:'Daily scores',
+    admin_metrics:'metrics', admin_empty:'empty',
+    admin_score_version:'Score version', admin_last_sync:'Last sync',
+    admin_incremental_title:'Update cache', admin_incremental_desc:'Fill missing entries since last run. Fast, safe to run anytime.',
+    admin_force_title:'Rebuild all', admin_force_desc:'Clear and recompute all caches from raw data. Use after formula changes.',
+    admin_run:'Run', admin_force_run:'Rebuild'
   },
   ru: {
     app_title:'\u0417\u0434\u043e\u0440\u043e\u0432\u044c\u0435', explore:'\u041f\u043e\u0438\u0441\u043a', loading:'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0434\u0430\u043d\u043d\u044b\u0445',
@@ -125,7 +132,14 @@ var I18N = {
     lbl_total:'\u0418\u0442\u043e\u0433\u043e', lbl_deep:'\u0413\u043b\u0443\u0431\u043e\u043a\u0438\u0439', lbl_core:'\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0439',
     how_it_works:'\u041a\u0430\u043a \u044d\u0442\u043e \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442',
     health_sections:'\u041e\u0431\u0437\u043e\u0440 \u0437\u0434\u043e\u0440\u043e\u0432\u044c\u044f',
-    at_a_glance:'\u0421\u0435\u0433\u043e\u0434\u043d\u044f'
+    at_a_glance:'\u0421\u0435\u0433\u043e\u0434\u043d\u044f',
+    admin_title:'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438', admin_cache_status:'\u0421\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435 \u043a\u044d\u0448\u0430', admin_actions:'\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u044f',
+    admin_raw:'\u0421\u044b\u0440\u044b\u0435 \u0434\u0430\u043d\u043d\u044b\u0435', admin_minute:'\u041c\u0438\u043d\u0443\u0442\u043d\u044b\u0439 \u043a\u044d\u0448', admin_hourly:'\u0427\u0430\u0441\u043e\u0432\u043e\u0439 \u043a\u044d\u0448', admin_daily:'\u0414\u043d\u0435\u0432\u043d\u044b\u0435 \u043e\u0446\u0435\u043d\u043a\u0438',
+    admin_metrics:'\u043c\u0435\u0442\u0440\u0438\u043a', admin_empty:'\u043f\u0443\u0441\u0442\u043e',
+    admin_score_version:'\u0412\u0435\u0440\u0441\u0438\u044f \u0441\u043a\u043e\u0440\u0438\u043d\u0433\u0430', admin_last_sync:'\u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0439 \u0441\u0438\u043d\u0445',
+    admin_incremental_title:'\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u043a\u044d\u0448', admin_incremental_desc:'\u0414\u043e\u0437\u0430\u043f\u043e\u043b\u043d\u0438\u0442\u044c \u043f\u0440\u043e\u043f\u0443\u0449\u0435\u043d\u043d\u044b\u0435 \u0437\u0430\u043f\u0438\u0441\u0438. \u0411\u044b\u0441\u0442\u0440\u043e, \u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e.',
+    admin_force_title:'\u041f\u0435\u0440\u0435\u0441\u0442\u0440\u043e\u0438\u0442\u044c \u0432\u0441\u0451', admin_force_desc:'\u041e\u0447\u0438\u0441\u0442\u0438\u0442\u044c \u0438 \u043f\u0435\u0440\u0435\u0441\u0447\u0438\u0442\u0430\u0442\u044c \u0432\u0441\u0435 \u043a\u044d\u0448\u0438. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 \u043f\u043e\u0441\u043b\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u0444\u043e\u0440\u043c\u0443\u043b\u044b.',
+    admin_run:'\u0417\u0430\u043f\u0443\u0441\u0442\u0438\u0442\u044c', admin_force_run:'\u041f\u0435\u0440\u0435\u0441\u0442\u0440\u043e\u0438\u0442\u044c'
   },
   sr: {
     app_title:'Zdravlje', explore:'Pretra\u017ei', loading:'U\u010ditavanje podataka',

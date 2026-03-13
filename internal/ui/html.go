@@ -11,6 +11,9 @@ const htmlBody = `
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span data-i18n="all_metrics">All metrics</span>
     </button>
+    <button class="top-btn" onclick="showAdminView()" title="Settings">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
     <button id="lang-btn" class="top-btn lang-toggle" onclick="cycleLang()">EN</button>
   </div>
 </header>
@@ -125,6 +128,51 @@ const htmlBody = `
       </div>
     </div>
     <div id="metrics-content"></div>
+  </div>
+
+  <!-- Admin / Settings view -->
+  <div id="admin-view" style="display:none">
+    <div id="admin-header">
+      <button class="back-btn" onclick="hideAdminView()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+        <span data-i18n="back">Back</span>
+      </button>
+      <span class="view-title" data-i18n="admin_title">Settings</span>
+    </div>
+    <div id="admin-content">
+      <div id="admin-loading"><div class="spinner"></div></div>
+      <div id="admin-body" style="display:none">
+
+        <div class="admin-section">
+          <div class="section-title" data-i18n="admin_cache_status">Cache status</div>
+          <div id="admin-cache-table"></div>
+        </div>
+
+        <div class="admin-section">
+          <div class="section-title" data-i18n="admin_actions">Actions</div>
+          <div class="admin-actions">
+            <div class="admin-action-card">
+              <div class="admin-action-title" data-i18n="admin_incremental_title">Update cache</div>
+              <div class="admin-action-desc" data-i18n="admin_incremental_desc">Fill missing entries since last run. Fast, safe to run anytime.</div>
+              <button class="admin-btn primary" onclick="triggerBackfill(false)" id="btn-backfill">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                <span data-i18n="admin_run">Run</span>
+              </button>
+            </div>
+            <div class="admin-action-card">
+              <div class="admin-action-title" data-i18n="admin_force_title">Rebuild all</div>
+              <div class="admin-action-desc" data-i18n="admin_force_desc">Clear and recompute all caches from raw data. Use after formula changes.</div>
+              <button class="admin-btn danger" onclick="triggerBackfill(true)" id="btn-backfill-force">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                <span data-i18n="admin_force_run">Rebuild</span>
+              </button>
+            </div>
+          </div>
+          <div id="admin-msg" style="display:none"></div>
+        </div>
+
+      </div>
+    </div>
   </div>
 
   <!-- Chart detail view -->

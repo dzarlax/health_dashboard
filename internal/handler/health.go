@@ -10,12 +10,13 @@ import (
 )
 
 type Handler struct {
-	db     *storage.DB
-	apiKey string
+	db        *storage.DB
+	apiKey    string
+	onNewData func() // called in a goroutine after a successful insert; may be nil
 }
 
-func New(db *storage.DB, apiKey string) *Handler {
-	return &Handler{db: db, apiKey: apiKey}
+func New(db *storage.DB, apiKey string, onNewData func()) *Handler {
+	return &Handler{db: db, apiKey: apiKey, onNewData: onNewData}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -74,6 +75,9 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("saved record id=%d points=%d", id, len(points))
+	if h.onNewData != nil {
+		go h.onNewData()
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"status": "ok", "id": id, "points": len(points)})
 }

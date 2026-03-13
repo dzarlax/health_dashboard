@@ -56,7 +56,75 @@ func (s *DB) migrate() error {
 		return err
 	}
 	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_metric_points_name_date ON metric_points(metric_name, date)`)
+	if err != nil {
+		return err
+	}
+	if err := s.migrateDailyScores(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS minute_metrics (
+		metric_name TEXT NOT NULL,
+		minute      TEXT NOT NULL,
+		source      TEXT NOT NULL DEFAULT '',
+		avg_val     REAL NOT NULL,
+		min_val     REAL NOT NULL,
+		max_val     REAL NOT NULL,
+		PRIMARY KEY (metric_name, minute, source)
+	)`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS hourly_metrics (
+		metric_name TEXT NOT NULL,
+		hour        TEXT NOT NULL,
+		source      TEXT NOT NULL DEFAULT '',
+		avg_val     REAL NOT NULL,
+		min_val     REAL NOT NULL,
+		max_val     REAL NOT NULL,
+		PRIMARY KEY (metric_name, hour, source)
+	)`)
 	return err
+}
+
+// migrateDailyScores creates or upgrades the daily_scores table.
+// v1 had NOT NULL on readiness; v2 adds 13 metric columns and makes all
+// computed columns nullable so metric and readiness fills can happen
+// independently. Safe to call on every startup.
+func (s *DB) migrateDailyScores() error {
+	// Check whether the table needs creating or upgrading.
+	var hasMetrics int
+	s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('daily_scores') WHERE name='hrv_avg'`).Scan(&hasMetrics)
+
+	if hasMetrics == 0 {
+		// Create new table or upgrade existing one via rename-copy-drop.
+		s.db.Exec(`CREATE TABLE IF NOT EXISTS daily_scores_new (
+			date          TEXT NOT NULL PRIMARY KEY,
+			readiness     INTEGER,
+			score_version INTEGER,
+			computed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+			hrv_avg       REAL,
+			rhr_avg       REAL,
+			sleep_total   REAL,
+			sleep_deep    REAL,
+			sleep_rem     REAL,
+			sleep_core    REAL,
+			sleep_awake   REAL,
+			steps         REAL,
+			calories      REAL,
+			exercise_min  REAL,
+			spo2_avg      REAL,
+			vo2_avg       REAL,
+			resp_avg      REAL
+		)`)
+		// Copy any existing rows (readiness scores survive the upgrade).
+		s.db.Exec(`INSERT OR IGNORE INTO daily_scores_new (date, readiness, score_version, computed_at)
+			SELECT date, readiness, score_version, computed_at FROM daily_scores`)
+		s.db.Exec(`DROP TABLE IF EXISTS daily_scores`)
+		if _, err := s.db.Exec(`ALTER TABLE daily_scores_new RENAME TO daily_scores`); err != nil {
+			return fmt.Errorf("migrate daily_scores: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *DB) Close() error {

@@ -1,4 +1,4 @@
-.PHONY: dev build migrate dedup downsample mcp docker-up docker-down test
+.PHONY: dev build migrate dedup backfill backfill-force docker-up docker-down test
 
 DB_PATH ?= ./data/health.db
 ADDR    ?= :8080
@@ -16,14 +16,11 @@ migrate:
 dedup:
 	DB_PATH=$(DB_PATH) go run ./cmd/dedup
 
-downsample:
-	DB_PATH=$(DB_PATH) go run ./cmd/downsample
+backfill:
+	DB_PATH=$(DB_PATH) go run ./cmd/backfill
 
-downsample-dry:
-	DB_PATH=$(DB_PATH) go run ./cmd/downsample --dry-run
-
-mcp:
-	DB_PATH=$(DB_PATH) go run ./cmd/mcp
+backfill-force:
+	DB_PATH=$(DB_PATH) go run ./cmd/backfill --force
 
 docker-up:
 	docker compose up -d --build

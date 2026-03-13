@@ -16,15 +16,16 @@ type Handler struct {
 	db       *storage.DB
 	password string // empty = no auth
 	token    string // sha256(password), used as cookie value
+	backfill func(force bool)
 }
 
-func New(db *storage.DB, password string) *Handler {
+func New(db *storage.DB, password string, backfill func(force bool)) *Handler {
 	var token string
 	if password != "" {
 		h := sha256.Sum256([]byte(password))
 		token = hex.EncodeToString(h[:])
 	}
-	return &Handler{db: db, password: password, token: token}
+	return &Handler{db: db, password: password, token: token, backfill: backfill}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -36,6 +37,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/dashboard", h.guard(h.dashboard))
 	mux.HandleFunc("/api/health-briefing", h.guard(h.healthBriefing))
 	mux.HandleFunc("/api/readiness-history", h.guard(h.readinessHistory))
+	mux.HandleFunc("/api/admin/status", h.guard(h.adminStatus))
+	mux.HandleFunc("/api/admin/backfill", h.guard(h.adminBackfill))
 }
 
 func (h *Handler) guard(next http.HandlerFunc) http.HandlerFunc {
@@ -215,6 +218,33 @@ func (h *Handler) healthBriefing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, resp)
+}
+
+func (h *Handler) adminStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := h.db.GetCacheStatus()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, status)
+}
+
+func (h *Handler) adminBackfill(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.backfill == nil {
+		http.Error(w, "backfill not configured", http.StatusServiceUnavailable)
+		return
+	}
+	force := r.URL.Query().Get("force") == "1"
+	h.backfill(force)
+	msg := "incremental backfill scheduled"
+	if force {
+		msg = "full rebuild started"
+	}
+	jsonResponse(w, map[string]string{"status": "ok", "message": msg})
 }
 
 func jsonResponse(w http.ResponseWriter, v any) {

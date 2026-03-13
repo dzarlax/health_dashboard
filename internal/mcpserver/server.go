@@ -11,13 +11,8 @@ import (
 	"health-receiver/internal/storage"
 )
 
-// sumMetrics lists metrics that should be aggregated with SUM rather than AVG.
-var sumMetrics = map[string]bool{
-	"step_count": true, "active_energy": true, "basal_energy_burned": true,
-	"apple_exercise_time": true, "apple_stand_time": true,
-	"flights_climbed": true, "walking_running_distance": true,
-	"time_in_daylight": true, "apple_stand_hour": true,
-}
+// sumMetrics is the canonical SUM vs AVG classification, shared with storage.
+var sumMetrics = storage.SumMetrics
 
 // Register mounts MCP Streamable HTTP at /mcp.
 func Register(mux *http.ServeMux, db *storage.DB, _ string, apiKey string) {

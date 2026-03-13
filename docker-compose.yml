@@ -11,30 +11,3 @@ services:
       # - UI_PASSWORD=your-ui-password
     restart: unless-stopped
 
-  # Downsampling: runs daily at 03:00, aggregates old data to reduce DB size.
-  # To disable: comment out this entire downsample block.
-  downsample:
-    image: dzarlax/health_dashboard:latest
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        echo "Downsample scheduler started"
-        while true; do
-          now=$$(date +%H:%M)
-          if [ "$$now" = "03:00" ]; then
-            echo "[$$now] Running downsample..."
-            /app/downsample
-            sleep 61
-          fi
-          sleep 30
-        done
-    volumes:
-      - ./data:/app/data
-    environment:
-      - DB_PATH=/app/data/health.db
-      # Override thresholds (days):
-      # - DOWNSAMPLE_PASS1_DAYS=14
-      # - DOWNSAMPLE_PASS2_DAYS=90
-    restart: unless-stopped
-    depends_on:
-      - health-receiver

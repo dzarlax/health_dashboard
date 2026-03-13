@@ -9,19 +9,91 @@ import (
 	"health-receiver/internal/health"
 )
 
-// GetHealthBriefing fetches raw metric time series from the DB and delegates
-// all scoring and insight computation to the health package.
-// lang selects the output language ("en", "ru", "sr").
-func (s *DB) GetHealthBriefing(lang string) (*health.BriefingResponse, error) {
-	var lastDate string
-	if err := s.db.QueryRow(`SELECT MAX(substr(date,1,10)) FROM metric_points WHERE qty > 0`).Scan(&lastDate); err != nil || lastDate == "" {
-		return &health.BriefingResponse{Greeting: "Welcome! No health data yet."}, nil
+// rawMetricsFromDailyScores reads 30 days of pre-aggregated metrics from the
+// daily_scores cache in a single query. Returns nil if the cache is empty or
+// has no usable rows (cold start).
+func (s *DB) rawMetricsFromDailyScores(lastDate string) *health.RawMetrics {
+	rows, err := s.db.Query(`
+		SELECT date, hrv_avg, rhr_avg, sleep_total, sleep_deep, sleep_rem,
+		       sleep_core, sleep_awake, steps, calories, exercise_min,
+		       spo2_avg, vo2_avg, resp_avg
+		FROM daily_scores
+		WHERE date >= ? AND date <= ?
+		  AND (hrv_avg IS NOT NULL OR sleep_total IS NOT NULL OR steps IS NOT NULL)
+		ORDER BY date DESC
+		LIMIT 30`,
+		subtractDays(lastDate, 29), lastDate)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	type row struct {
+		date                                         string
+		hrv, rhr, slp, deep, rem, core, awake        *float64
+		steps, cal, ex, spo2, vo2, resp              *float64
 	}
 
-	// getDailyValues returns per-day aggregated values.
-	// Sleep metrics use MAX across sources (two devices record the same night
-	// independently). All other metrics use flat aggregation (HealthKit
-	// already deduplicates cumulative metrics at sample level via pipe-joined sources).
+	var all []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(
+			&r.date, &r.hrv, &r.rhr, &r.slp, &r.deep, &r.rem,
+			&r.core, &r.awake, &r.steps, &r.cal, &r.ex,
+			&r.spo2, &r.vo2, &r.resp,
+		); err == nil {
+			all = append(all, r)
+		}
+	}
+	if len(all) == 0 {
+		return nil
+	}
+
+	f := func(p *float64) float64 {
+		if p == nil {
+			return 0
+		}
+		return *p
+	}
+	appendNonZero := func(dst *[]float64, p *float64) {
+		if p != nil && *p > 0 {
+			*dst = append(*dst, *p)
+		} else {
+			*dst = append(*dst, 0)
+		}
+	}
+
+	d := &health.RawMetrics{LastDate: lastDate}
+	for _, r := range all {
+		appendNonZero(&d.HRV, r.hrv)
+		appendNonZero(&d.RHR, r.rhr)
+		appendNonZero(&d.Sleep, r.slp)
+		appendNonZero(&d.Deep, r.deep)
+		appendNonZero(&d.REM, r.rem)
+		appendNonZero(&d.Awake, r.awake)
+		appendNonZero(&d.Steps, r.steps)
+		appendNonZero(&d.Cal, r.cal)
+		appendNonZero(&d.Exercise, r.ex)
+		appendNonZero(&d.SpO2, r.spo2)
+		appendNonZero(&d.VO2, r.vo2)
+		appendNonZero(&d.Resp, r.resp)
+	}
+
+	// StepsWithDates and HRVWithDates — last 7 rows (already in DESC order).
+	for _, r := range all {
+		if len(d.StepsWithDates) >= 7 {
+			break
+		}
+		d.StepsWithDates = append(d.StepsWithDates, health.DatedValue{Date: r.date, Val: f(r.steps)})
+		d.HRVWithDates = append(d.HRVWithDates, health.DatedValue{Date: r.date, Val: f(r.hrv)})
+	}
+
+	return d
+}
+
+// rawMetricsFromPoints reads raw metric time-series from metric_points using
+// per-metric queries. This is the fallback path when daily_scores cache is cold.
+func (s *DB) rawMetricsFromPoints(lastDate string) *health.RawMetrics {
 	getDailyValues := func(metric string, days int, agg string) []float64 {
 		var rows *sql.Rows
 		var err error
@@ -55,7 +127,7 @@ func (s *DB) GetHealthBriefing(lang string) (*health.BriefingResponse, error) {
 		var vals []float64
 		for rows.Next() {
 			var v float64
-			if err := rows.Scan(&v); err == nil {
+			if rows.Scan(&v) == nil {
 				vals = append(vals, v)
 			}
 		}
@@ -95,14 +167,14 @@ func (s *DB) GetHealthBriefing(lang string) (*health.BriefingResponse, error) {
 		var out []health.DatedValue
 		for rows.Next() {
 			var dv health.DatedValue
-			if err := rows.Scan(&dv.Date, &dv.Val); err == nil {
+			if rows.Scan(&dv.Date, &dv.Val) == nil {
 				out = append(out, dv)
 			}
 		}
 		return out
 	}
 
-	data := health.RawMetrics{
+	return &health.RawMetrics{
 		LastDate:       lastDate,
 		HRV:            getDailyValues("heart_rate_variability", 30, "AVG"),
 		RHR:            getDailyValues("resting_heart_rate", 30, "AVG"),
@@ -119,8 +191,25 @@ func (s *DB) GetHealthBriefing(lang string) (*health.BriefingResponse, error) {
 		StepsWithDates: getDailyWithDates("step_count", 7, "SUM"),
 		HRVWithDates:   getDailyWithDates("heart_rate_variability", 7, "AVG"),
 	}
+}
 
-	resp := health.ComputeBriefing(data, lang)
+// GetHealthBriefing fetches raw metric time series from the DB and delegates
+// all scoring and insight computation to the health package.
+// lang selects the output language ("en", "ru", "sr").
+func (s *DB) GetHealthBriefing(lang string) (*health.BriefingResponse, error) {
+	var lastDate string
+	if err := s.db.QueryRow(`SELECT MAX(substr(date,1,10)) FROM metric_points WHERE qty > 0`).Scan(&lastDate); err != nil || lastDate == "" {
+		return &health.BriefingResponse{Greeting: "Welcome! No health data yet."}, nil
+	}
+
+	// Try reading 30-day metric history from daily_scores (1 query).
+	// Fall back to per-metric queries against metric_points if cache is cold.
+	data := s.rawMetricsFromDailyScores(lastDate)
+	if data == nil {
+		data = s.rawMetricsFromPoints(lastDate)
+	}
+
+	resp := health.ComputeBriefing(*data, lang)
 
 	// Attach per-source sleep breakdown for the most recent night.
 	if resp.Sleep != nil {
@@ -150,11 +239,26 @@ func (s *DB) GetHealthBriefing(lang string) (*health.BriefingResponse, error) {
 	return resp, nil
 }
 
-// GetReadinessHistory computes a historical readiness score for each of the
-// last `outputDays` days using a sliding 30-day baseline window.
-// For each output day D the function uses HRV/RHR/sleep data from D-29..D
-// (most-recent-first) and calls health.ComputeReadinessScore.
+// GetReadinessHistory returns readiness scores for the last `outputDays` days.
+// Results are served from the daily_scores cache when available and fresh;
+// otherwise the full sliding-window computation runs and the cache is updated.
 func (s *DB) GetReadinessHistory(outputDays int) ([]health.ReadinessPoint, error) {
+	cached, err := s.readinessFromCache(outputDays)
+	if err == nil && isCacheRecent(cached) {
+		return cached, nil
+	}
+	pts, err := s.computeReadinessHistory(outputDays)
+	if err != nil {
+		return nil, err
+	}
+	go s.saveReadinessScores(pts)
+	return pts, nil
+}
+
+// computeReadinessHistory is the raw sliding-window computation (no caching).
+// For each output day D it uses HRV/RHR/sleep data from D-29..D
+// (most-recent-first) and calls health.ComputeReadinessScore.
+func (s *DB) computeReadinessHistory(outputDays int) ([]health.ReadinessPoint, error) {
 	window := 30
 	total := outputDays + window
 

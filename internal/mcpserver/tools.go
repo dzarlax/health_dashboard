@@ -13,6 +13,31 @@ import (
 )
 
 func registerMetricTools(s *server.MCPServer, db *storage.DB) {
+	s.AddTool(mcp.NewTool("get_health_briefing",
+		mcp.WithDescription("Get a full daily health briefing: readiness score, sleep analysis, HRV/RHR recovery, activity, and AI-generated insights. Best starting point for a comprehensive health summary."),
+		mcp.WithString("lang", mcp.Description("Response language: en, ru, sr (default: en)")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		lang := req.GetString("lang", "en")
+		briefing, err := db.GetHealthBriefing(lang)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(briefing)
+	})
+
+	s.AddTool(mcp.NewTool("get_readiness_history",
+		mcp.WithDescription("Get daily readiness scores (0–100) for the last N days. Score combines HRV trend, resting heart rate, and sleep duration relative to personal baseline."),
+		mcp.WithNumber("days", mcp.Description("Number of recent days (default: 30)")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		days := req.GetInt("days", 30)
+		pts, err := db.GetReadinessHistory(days)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(map[string]any{"days": days, "points": pts})
+	})
+
+
 	s.AddTool(mcp.NewTool("list_metrics",
 		mcp.WithDescription("List all available health metrics with record counts and date ranges. Call this first to discover what data is available."),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -78,21 +103,24 @@ func registerMetricTools(s *server.MCPServer, db *storage.DB) {
 		mcp.WithDescription(`Run a read-only SQL SELECT on the health database. Use when other tools don't cover your query.
 
 Schema:
-  metric_points(
-    id               INTEGER,
-    health_record_id INTEGER,   -- FK to health_records.id
-    metric_name      TEXT,      -- e.g. 'heart_rate', 'step_count', 'sleep_total'
-    units            TEXT,      -- e.g. 'count/min', 'count', 'kcal', 'hr'
-    date             TEXT,      -- "YYYY-MM-DD HH:MM:SS +HHMM" — use substr(date,1,10) for day
-    qty              REAL,      -- the measured value
-    source           TEXT       -- data source app/device
-  )
-  health_records(
-    id               INTEGER,
-    received_at      DATETIME,  -- when the server received the payload
-    automation_name  TEXT,
-    session_id       TEXT
-  )
+  metric_points(id, health_record_id, metric_name TEXT, units TEXT,
+    date TEXT,   -- "YYYY-MM-DD HH:MM:SS +HHMM" — use substr(date,1,10) for day
+    qty REAL, source TEXT)
+
+  daily_scores(date TEXT PRIMARY KEY,  -- "YYYY-MM-DD", pre-aggregated per-day values
+    readiness INTEGER,                 -- 0-100 readiness score
+    hrv_avg REAL, rhr_avg REAL,
+    sleep_total REAL, sleep_deep REAL, sleep_rem REAL, sleep_core REAL, sleep_awake REAL,
+    steps REAL, calories REAL, exercise_min REAL,
+    spo2_avg REAL, vo2_avg REAL, resp_avg REAL)
+
+  hourly_metrics(metric_name TEXT, hour TEXT,  -- "YYYY-MM-DD HH:00"
+    source TEXT, avg_val REAL, min_val REAL, max_val REAL)
+
+  minute_metrics(metric_name TEXT, minute TEXT, -- "YYYY-MM-DD HH:MM"
+    source TEXT, avg_val REAL, min_val REAL, max_val REAL)
+
+  health_records(id, received_at DATETIME, automation_name TEXT, session_id TEXT)
 
 Key metrics: heart_rate, resting_heart_rate, heart_rate_variability, blood_oxygen_saturation,
   step_count, active_energy, basal_energy_burned, walking_running_distance, apple_exercise_time,
@@ -100,10 +128,12 @@ Key metrics: heart_rate, resting_heart_rate, heart_rate_variability, blood_oxyge
   respiratory_rate, apple_sleeping_wrist_temperature, vo2_max
 
 Notes:
-  - Always filter qty > 0 to exclude zero-value placeholders
-  - Date comparison: use substr(date,1,10) >= '2026-01-01' (NOT strftime — TZ offset breaks it)
+  - Prefer daily_scores for day-level queries — one row per day, much faster than metric_points
+  - Always filter qty > 0 on metric_points to exclude zero-value placeholders
+  - Date comparison on metric_points: use substr(date,1,10) >= '2026-01-01' (NOT strftime — TZ offset breaks it)
   - SUM metrics: step_count, active_energy, basal_energy_burned, apple_exercise_time,
-      apple_stand_time, flights_climbed, walking_running_distance, time_in_daylight
+      apple_stand_time, flights_climbed, walking_running_distance, time_in_daylight,
+      sleep_total, sleep_deep, sleep_rem, sleep_core, sleep_awake
   - All others use AVG`),
 		mcp.WithString("query", mcp.Required(), mcp.Description("SQL SELECT query")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

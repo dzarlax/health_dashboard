@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+
 // MetricSummary is returned by ListMetrics.
 type MetricSummary struct {
 	Name  string
@@ -122,16 +123,99 @@ func (s *DB) ListMetrics() ([]MetricSummary, error) {
 }
 
 func (s *DB) GetMetricData(metric, from, to, bucket, aggFunc string) ([]DataPoint, error) {
-	bucketExpr := bucketExpression(bucket)
-
 	if aggFunc != "SUM" && aggFunc != "MAX" && aggFunc != "MIN" {
 		aggFunc = "AVG"
 	}
 
-	// For sleep metrics, MAX across sources prevents double-counting when two
-	// devices (e.g. Apple Watch + RingConn) each independently record the same
-	// night. For other SUM metrics (steps, calories), HealthKit deduplicates at
-	// the sample level, so flat SUM is correct.
+	switch bucket {
+	case "minute":
+		return s.metricDataFromCache("minute_metrics", "minute", metric, from, to)
+	case "hour":
+		return s.metricDataFromCache("hourly_metrics", "hour", metric, from, to)
+	case "day":
+		return s.metricDataDayFromHourly(metric, from, to)
+	}
+
+	// Fallback: read directly from raw metric_points (should not be reached
+	// in normal operation once the cache is populated).
+	return s.metricDataRaw(metric, from, to, bucket, aggFunc)
+}
+
+// metricDataFromCache reads from a pre-aggregated table (minute_metrics or
+// hourly_metrics), combining per-source rows using the metric's combine function.
+func (s *DB) metricDataFromCache(table, col, metric, from, to string) ([]DataPoint, error) {
+	combine := combineFuncFor(metric)
+	query := fmt.Sprintf(`
+		SELECT %s, %s(avg_val), MIN(min_val), MAX(max_val)
+		FROM %s
+		WHERE metric_name = ? AND %s >= ? AND %s <= ?
+		GROUP BY %s
+		ORDER BY %s`, col, combine, table, col, col, col, col)
+
+	rows, err := s.db.Query(query, metric, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DataPoint
+	for rows.Next() {
+		var p DataPoint
+		if rows.Scan(&p.Date, &p.Qty, &p.Min, &p.Max) == nil {
+			out = append(out, p)
+		}
+	}
+
+	// If cache is empty, fall back to raw data so the UI never returns nothing.
+	if len(out) == 0 {
+		bucket := "minute"
+		if col == "hour" {
+			bucket = "hour"
+		}
+		return s.metricDataRaw(metric, from, to, bucket, aggFuncFor(metric))
+	}
+	return out, rows.Err()
+}
+
+// metricDataDayFromHourly builds daily buckets by aggregating hourly_metrics.
+// This is the third level of the cascade (hourly → daily).
+func (s *DB) metricDataDayFromHourly(metric, from, to string) ([]DataPoint, error) {
+	combine := combineFuncFor(metric)
+	query := fmt.Sprintf(`
+		SELECT substr(hour,1,10), %s(avg_val), MIN(min_val), MAX(max_val)
+		FROM hourly_metrics
+		WHERE metric_name = ? AND hour >= ? AND hour <= ?
+		GROUP BY substr(hour,1,10)
+		ORDER BY substr(hour,1,10)`, combine)
+
+	rows, err := s.db.Query(query, metric, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DataPoint
+	for rows.Next() {
+		var p DataPoint
+		if rows.Scan(&p.Date, &p.Qty, &p.Min, &p.Max) == nil {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return s.metricDataRaw(metric, from, to, "day", aggFuncFor(metric))
+	}
+	return out, rows.Err()
+}
+
+// metricDataRaw reads directly from metric_points. Used as fallback when the
+// pre-aggregated cache is empty, and for bucket=minute on short ranges before
+// backfill runs.
+func (s *DB) metricDataRaw(metric, from, to, bucket, aggFunc string) ([]DataPoint, error) {
+	bucketExpr := bucketExpression(bucket)
+	if aggFunc != "SUM" && aggFunc != "MAX" && aggFunc != "MIN" {
+		aggFunc = "AVG"
+	}
+
 	var query string
 	if aggFunc == "SUM" && strings.HasPrefix(metric, "sleep_") {
 		query = `SELECT bucket, MAX(source_sum), MIN(source_min), MAX(source_max)
@@ -172,22 +256,58 @@ func (s *DB) GetMetricData(metric, from, to, bucket, aggFunc string) ([]DataPoin
 }
 
 func (s *DB) GetMetricDataBySource(metric, from, to, bucket, aggFunc string) ([]SourceDataPoints, error) {
-	bucketExpr := bucketExpression(bucket)
-
 	if aggFunc != "SUM" && aggFunc != "MAX" && aggFunc != "MIN" {
 		aggFunc = "AVG"
 	}
 
-	// Normalize source: HealthKit pipe-joins contributing device names (e.g.
-	// "Apple Watch|iPhone"). We take only the first component as the display
-	// source so that "Watch", "Watch|Ring", "Watch|iPhone" all merge under "Watch".
+	pts, err := s.metricDataBySourceFromCache(metric, from, to, bucket)
+	if err != nil || len(pts) == 0 {
+		pts, err = s.metricDataBySourceRaw(metric, from, to, bucket, aggFunc)
+	}
+	return pts, err
+}
+
+func (s *DB) metricDataBySourceFromCache(metric, from, to, bucket string) ([]SourceDataPoints, error) {
+	table, col := "minute_metrics", "minute"
+	if bucket == "hour" {
+		table, col = "hourly_metrics", "hour"
+	} else if bucket == "day" {
+		// Aggregate hourly_metrics down to day per source.
+		table, col = "hourly_metrics", "hour"
+		normSource := `SUBSTR(source, 1, INSTR(source || '|', '|') - 1)`
+		agg := aggFuncFor(metric)
+		query := fmt.Sprintf(`
+			SELECT substr(hour,1,10) as bkt, %s as src, %s(avg_val), MIN(min_val), MAX(max_val)
+			FROM %s
+			WHERE metric_name = ? AND hour >= ? AND hour <= ?
+			GROUP BY bkt, src
+			ORDER BY bkt, src`, normSource, agg, table)
+		return s.scanSourcePoints(query, metric, from, to)
+	}
+
+	normSource := `SUBSTR(source, 1, INSTR(source || '|', '|') - 1)`
+	agg := aggFuncFor(metric)
+	query := fmt.Sprintf(`
+		SELECT %s as bkt, %s as src, %s(avg_val), MIN(min_val), MAX(max_val)
+		FROM %s
+		WHERE metric_name = ? AND %s >= ? AND %s <= ?
+		GROUP BY bkt, src
+		ORDER BY bkt, src`, col, normSource, agg, table, col, col)
+	return s.scanSourcePoints(query, metric, from, to)
+}
+
+func (s *DB) metricDataBySourceRaw(metric, from, to, bucket, aggFunc string) ([]SourceDataPoints, error) {
+	bucketExpr := bucketExpression(bucket)
 	normSource := `SUBSTR(source, 1, INSTR(source || '|', '|') - 1)`
 	query := "SELECT " + bucketExpr + " as bucket, " + normSource + " as src, " + aggFunc + `(qty), MIN(qty), MAX(qty)
 		FROM metric_points
 		WHERE metric_name = ? AND date >= ? AND date <= ? AND qty > 0
 		GROUP BY bucket, src
 		ORDER BY bucket, src`
+	return s.scanSourcePoints(query, metric, from, to)
+}
 
+func (s *DB) scanSourcePoints(query, metric, from, to string) ([]SourceDataPoints, error) {
 	rows, err := s.db.Query(query, metric, from, to)
 	if err != nil {
 		return nil, err
@@ -212,7 +332,6 @@ func (s *DB) GetMetricDataBySource(metric, from, to, bucket, aggFunc string) ([]
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
 	var result []SourceDataPoints
 	for _, src := range sourceOrder {
 		result = append(result, SourceDataPoints{Source: src, Points: sourceMap[src]})
