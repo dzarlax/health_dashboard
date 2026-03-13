@@ -55,11 +55,21 @@ type Insight struct {
 	Type string `json:"type"` // "positive" or "warning"
 }
 
+type SleepSourceSummary struct {
+	Source string  `json:"source"`
+	Total  float64 `json:"total"`
+	Deep   float64 `json:"deep"`
+	REM    float64 `json:"rem"`
+	Core   float64 `json:"core"`
+	Awake  float64 `json:"awake"`
+}
+
 type SleepAnalysis struct {
-	DeepAvg    float64 `json:"deep_avg"`
-	REMAvg     float64 `json:"rem_avg"`
-	AwakeAvg   float64 `json:"awake_avg"`
-	Efficiency float64 `json:"efficiency"`
+	DeepAvg    float64              `json:"deep_avg"`
+	REMAvg     float64              `json:"rem_avg"`
+	AwakeAvg   float64              `json:"awake_avg"`
+	Efficiency float64              `json:"efficiency"`
+	Sources    []SleepSourceSummary `json:"sources,omitempty"`
 }
 
 type MetricCard struct {
@@ -68,6 +78,12 @@ type MetricCard struct {
 	Unit       string  `json:"unit"`
 	TrendPct   float64 `json:"trend_pct"`
 	TrendLabel string  `json:"trend_label"`
+}
+
+// ReadinessPoint is a single historical readiness data point.
+type ReadinessPoint struct {
+	Date  string `json:"date"`
+	Score int    `json:"score"`
 }
 
 type BriefingResponse struct {

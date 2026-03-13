@@ -1,0 +1,183 @@
+package health
+
+import "math"
+
+func scoreRecovery(d RawMetrics, ls LangStrings) *BriefingSection {
+	if len(d.HRV) == 0 && len(d.RHR) == 0 {
+		return nil
+	}
+	sec := &BriefingSection{Key: "recovery", Title: ls["sec_recovery"], Icon: "battery"}
+	score, maxScore := 0, 0
+
+	if len(d.HRV) >= 7 {
+		recent := avg(d.HRV[:5])
+		baseline := avg(d.HRV[5:])
+		pct := pctChange(recent, baseline)
+		t := trend(pct, false)
+		// Dynamic threshold: ±1 SD expressed as % of baseline.
+		// Clamped to [3%, 15%] so sparse or noisy data stays sensible.
+		sd := stddev(d.HRV[5:])
+		thresholdPct := 5.0
+		if baseline > 0 && sd > 0 {
+			thresholdPct = sd / baseline * 100
+			if thresholdPct < 3 {
+				thresholdPct = 3
+			}
+			if thresholdPct > 15 {
+				thresholdPct = 15
+			}
+		}
+		if pct > thresholdPct {
+			score += 2
+		} else if pct > -thresholdPct {
+			score += 1
+		}
+		maxScore += 2
+		note := ls["hrv_note_stable"]
+		if pct > thresholdPct {
+			note = ls["hrv_note_good"]
+		} else if pct < -thresholdPct {
+			note = ls["hrv_note_low"]
+		}
+		sec.Details = append(sec.Details, BriefingDetail{
+			Label: ls["lbl_hrv"], Value: fmtFloat(recent, 0) + " ms", Note: note, Trend: t,
+		})
+	}
+
+	if len(d.RHR) >= 7 {
+		recent := avg(d.RHR[:5])
+		baseline := avg(d.RHR[5:])
+		pct := pctChange(recent, baseline)
+		t := trend(pct, true)
+		if pct < -2 {
+			score += 2
+		} else if pct < 3 {
+			score += 1
+		}
+		maxScore += 2
+		note := ls["rhr_note_normal"]
+		if pct < -3 {
+			note = ls["rhr_note_low"]
+		} else if pct > 5 {
+			note = ls["rhr_note_high"]
+		}
+		sec.Details = append(sec.Details, BriefingDetail{
+			Label: ls["lbl_resting_hr"], Value: fmtFloat(recent, 0) + " bpm", Note: note, Trend: t,
+		})
+	}
+
+	if maxScore > 0 {
+		ratio := float64(score) / float64(maxScore)
+		if ratio >= 0.75 {
+			sec.Status = "good"
+			sec.Summary = ls["rec_summary_good"]
+		} else if ratio >= 0.4 {
+			sec.Status = "fair"
+			sec.Summary = ls["rec_summary_fair"]
+		} else {
+			sec.Status = "low"
+			sec.Summary = ls["rec_summary_low"]
+		}
+	}
+	return sec
+}
+
+// computeReadiness scores 0-100 based on how recent metrics (last 5 days)
+// compare to the historical baseline (days 6+). Slices must be sorted
+// most-recent-first (index 0 = today).
+//
+// Scoring philosophy:
+//   - "Normal day" (metrics equal to baseline) → ~70
+//   - "Good day"  (~10% above baseline)        → ~85
+//   - "Peak day"  (~20%+ above baseline)        → ~95-100
+//   - "Poor day"  (~15% below baseline)         → ~45
+//
+// This means 100 is genuinely exceptional, not the default.
+//
+// The 5-day recent window smooths out single-night outliers while still
+// capturing the full 72-hour post-exercise HRV suppression window (Zulfiqar 2010).
+func computeReadiness(d RawMetrics) (score int, label, tip string, recoveryPct int) {
+	// ratioScore maps a ratio (recent/baseline) to 0-100.
+	// ratio=1.0 → 70, ratio=1.2 → 100, ratio=0.8 → 40, ratio=0.67 → ~5
+	ratioScore := func(ratio float64) float64 {
+		return math.Min(100, math.Max(0, 70+(ratio-1)*150))
+	}
+
+	hrvScore := 70.0
+	if len(d.HRV) >= 7 {
+		recent := avg(d.HRV[:5])
+		baseline := avg(d.HRV[5:]) // exclude recent from baseline to avoid dilution
+		if baseline > 0 {
+			hrvScore = ratioScore(recent / baseline)
+		}
+	}
+
+	rhrScore := 70.0
+	if len(d.RHR) >= 7 {
+		recent := avg(d.RHR[:5])
+		baseline := avg(d.RHR[5:])
+		if recent > 0 {
+			// RHR: lower is better → invert ratio
+			rhrScore = ratioScore(baseline / recent)
+		}
+	}
+
+	// Sleep: blend absolute duration with relative-to-baseline component.
+	sleepScore := 70.0
+	if len(d.Sleep) >= 7 {
+		recent := avg(d.Sleep[:5])
+		baseline := avg(d.Sleep[5:])
+
+		var absScore float64
+		switch {
+		case recent >= 8.0:
+			absScore = 95
+		case recent >= 7.5:
+			absScore = 85
+		case recent >= 7.0:
+			absScore = 75
+		case recent >= 6.5:
+			absScore = 60
+		case recent >= 6.0:
+			absScore = 45
+		case recent >= 5.5:
+			absScore = 30
+		default:
+			absScore = 15
+		}
+
+		relScore := 70.0
+		if baseline > 0 {
+			relScore = ratioScore(recent / baseline)
+		}
+		sleepScore = absScore*0.5 + relScore*0.5
+	}
+
+	s := int(math.Round(hrvScore*0.4 + rhrScore*0.3 + sleepScore*0.3))
+	if s > 100 {
+		s = 100
+	}
+	if s < 0 {
+		s = 0
+	}
+	return s, "", "", 0 // label/tip filled by caller with i18n
+}
+
+// ComputeReadinessScore computes a 0–100 readiness score from pre-sorted
+// (most-recent-first) slices. At least 3 data points in each slice are needed
+// for a meaningful result; if a slice is empty, that component is treated as 100.
+func ComputeReadinessScore(hrv, rhr, sleep []float64) int {
+	d := RawMetrics{HRV: hrv, RHR: rhr, Sleep: sleep}
+	score, _, _, _ := computeReadiness(d)
+	return score
+}
+
+func readinessLabelTip(score int, ls LangStrings) (label, tip string) {
+	if score >= 80 {
+		return ls["readiness_optimal"], ls["tip_optimal"]
+	}
+	if score >= 50 {
+		return ls["readiness_fair"], ls["tip_fair"]
+	}
+	return ls["readiness_low"], ls["tip_low"]
+}

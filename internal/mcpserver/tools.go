@@ -2,10 +2,8 @@ package mcpserver
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
-	"net/http"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -14,47 +12,7 @@ import (
 	"health-receiver/internal/storage"
 )
 
-var sumMetrics = map[string]bool{
-	"step_count": true, "active_energy": true, "basal_energy_burned": true,
-	"apple_exercise_time": true, "apple_stand_time": true,
-	"flights_climbed": true, "walking_running_distance": true,
-	"time_in_daylight": true, "apple_stand_hour": true,
-}
-
-// Register mounts MCP Streamable HTTP at /mcp.
-func Register(mux *http.ServeMux, db *storage.DB, _ string, apiKey string) {
-	s := buildServer(db)
-	h := server.NewStreamableHTTPServer(s)
-	protected := withAPIKey(h, apiKey)
-	mux.Handle("/mcp", protected)
-	mux.Handle("/mcp/", protected)
-}
-
-func withAPIKey(next http.Handler, apiKey string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if apiKey == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		auth := r.Header.Get("Authorization")
-		key := strings.TrimPrefix(auth, "Bearer ")
-		if key == "" {
-			key = r.Header.Get("X-API-Key")
-		}
-		if key != apiKey {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func buildServer(db *storage.DB) *server.MCPServer {
-	s := server.NewMCPServer("health-mcp", "1.0.0",
-		server.WithToolCapabilities(true),
-	)
-
-	// list_metrics
+func registerMetricTools(s *server.MCPServer, db *storage.DB) {
 	s.AddTool(mcp.NewTool("list_metrics",
 		mcp.WithDescription("List all available health metrics with record counts and date ranges. Call this first to discover what data is available."),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -65,7 +23,6 @@ func buildServer(db *storage.DB) *server.MCPServer {
 		return jsonResult(metrics)
 	})
 
-	// get_dashboard
 	s.AddTool(mcp.NewTool("get_dashboard",
 		mcp.WithDescription("Get today's health summary: steps, calories, heart rate, SpO2, HRV, sleep and more. Includes trend vs yesterday."),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -76,7 +33,6 @@ func buildServer(db *storage.DB) *server.MCPServer {
 		return jsonResult(cards)
 	})
 
-	// get_metric_data
 	s.AddTool(mcp.NewTool("get_metric_data",
 		mcp.WithDescription("Get time series data for a single health metric. Use bucket='day' for trends, 'hour' for intraday patterns, 'minute' for raw resolution."),
 		mcp.WithString("metric", mcp.Required(), mcp.Description("Metric name, e.g. heart_rate, step_count, sleep_total")),
@@ -104,7 +60,6 @@ func buildServer(db *storage.DB) *server.MCPServer {
 		return jsonResult(map[string]any{"metric": metric, "bucket": bucket, "agg": aggFunc, "count": len(points), "points": points})
 	})
 
-	// summarize_metric
 	s.AddTool(mcp.NewTool("summarize_metric",
 		mcp.WithDescription("Statistical summary for a metric over recent days: avg, min, max, count + daily breakdown. Good for quick trend analysis."),
 		mcp.WithString("metric", mcp.Required(), mcp.Description("Metric name, e.g. heart_rate, step_count")),
@@ -119,7 +74,52 @@ func buildServer(db *storage.DB) *server.MCPServer {
 		return jsonResult(stats)
 	})
 
-	// compare_periods
+	s.AddTool(mcp.NewTool("sql_query",
+		mcp.WithDescription(`Run a read-only SQL SELECT on the health database. Use when other tools don't cover your query.
+
+Schema:
+  metric_points(
+    id               INTEGER,
+    health_record_id INTEGER,   -- FK to health_records.id
+    metric_name      TEXT,      -- e.g. 'heart_rate', 'step_count', 'sleep_total'
+    units            TEXT,      -- e.g. 'count/min', 'count', 'kcal', 'hr'
+    date             TEXT,      -- "YYYY-MM-DD HH:MM:SS +HHMM" — use substr(date,1,10) for day
+    qty              REAL,      -- the measured value
+    source           TEXT       -- data source app/device
+  )
+  health_records(
+    id               INTEGER,
+    received_at      DATETIME,  -- when the server received the payload
+    automation_name  TEXT,
+    session_id       TEXT
+  )
+
+Key metrics: heart_rate, resting_heart_rate, heart_rate_variability, blood_oxygen_saturation,
+  step_count, active_energy, basal_energy_burned, walking_running_distance, apple_exercise_time,
+  sleep_total, sleep_deep, sleep_rem, sleep_core, sleep_awake,
+  respiratory_rate, apple_sleeping_wrist_temperature, vo2_max
+
+Notes:
+  - Always filter qty > 0 to exclude zero-value placeholders
+  - Date comparison: use substr(date,1,10) >= '2026-01-01' (NOT strftime — TZ offset breaks it)
+  - SUM metrics: step_count, active_energy, basal_energy_burned, apple_exercise_time,
+      apple_stand_time, flights_climbed, walking_running_distance, time_in_daylight
+  - All others use AVG`),
+		mcp.WithString("query", mcp.Required(), mcp.Description("SQL SELECT query")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		query := req.GetString("query", "")
+		if !strings.HasPrefix(strings.TrimSpace(strings.ToUpper(query)), "SELECT") {
+			return mcp.NewToolResultError("only SELECT queries are allowed"), nil
+		}
+		rows, err := db.QueryReadOnly(query)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("query error: %v", err)), nil
+		}
+		return jsonResult(rows)
+	})
+}
+
+func registerAnalysisTools(s *server.MCPServer, db *storage.DB) {
 	s.AddTool(mcp.NewTool("compare_periods",
 		mcp.WithDescription("Compare a metric between two date ranges. Useful for before/after analysis or week-over-week comparisons."),
 		mcp.WithString("metric", mcp.Required(), mcp.Description("Metric name, e.g. heart_rate, step_count")),
@@ -190,42 +190,25 @@ func buildServer(db *storage.DB) *server.MCPServer {
 		}
 
 		return jsonResult(map[string]any{
-			"metric":     metric,
-			"agg":        agg,
-			"period_a":   a,
-			"period_b":   b,
-			"change_pct": changePct,
+			"metric": metric, "agg": agg,
+			"period_a": a, "period_b": b, "change_pct": changePct,
 		})
 	})
 
-	// get_sleep_summary
 	s.AddTool(mcp.NewTool("get_sleep_summary",
-		mcp.WithDescription("Get sleep breakdown by phase (deep, REM, core, awake, total) per night for a date range."),
+		mcp.WithDescription("Get sleep breakdown by phase (deep, REM, core, awake, total) per night for a date range. Values are deduplicated across devices (e.g. Apple Watch + RingConn)."),
 		mcp.WithString("from", mcp.Required(), mcp.Description("Start date YYYY-MM-DD")),
 		mcp.WithString("to", mcp.Required(), mcp.Description("End date YYYY-MM-DD")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		from := req.GetString("from", "")
 		to := req.GetString("to", "")
-
-		rows, err := db.QueryReadOnly(fmt.Sprintf(
-			`SELECT substr(date,1,10) as day,
-			  SUM(CASE WHEN metric_name='sleep_total' THEN qty ELSE 0 END) as total,
-			  SUM(CASE WHEN metric_name='sleep_deep'  THEN qty ELSE 0 END) as deep,
-			  SUM(CASE WHEN metric_name='sleep_rem'   THEN qty ELSE 0 END) as rem,
-			  SUM(CASE WHEN metric_name='sleep_core'  THEN qty ELSE 0 END) as core,
-			  SUM(CASE WHEN metric_name='sleep_awake' THEN qty ELSE 0 END) as awake
-			FROM metric_points
-			WHERE metric_name IN ('sleep_total','sleep_deep','sleep_rem','sleep_core','sleep_awake')
-			  AND substr(date,1,10) >= '%s' AND substr(date,1,10) <= '%s' AND qty > 0
-			GROUP BY day ORDER BY day`, from, to,
-		))
+		nights, err := db.GetSleepSummary(from, to)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return jsonResult(map[string]any{"from": from, "to": to, "nights": rows})
+		return jsonResult(map[string]any{"from": from, "to": to, "nights": nights})
 	})
 
-	// find_anomalies
 	s.AddTool(mcp.NewTool("find_anomalies",
 		mcp.WithDescription("Find days where a metric was statistically unusual (beyond mean ± sigma threshold). Useful for spotting illness, overtraining, or unusually good days."),
 		mcp.WithString("metric", mcp.Required(), mcp.Description("Metric name, e.g. heart_rate, hrv, step_count")),
@@ -242,7 +225,6 @@ func buildServer(db *storage.DB) *server.MCPServer {
 		if sumMetrics[metric] {
 			agg = "SUM"
 		}
-
 		points, err := db.GetMetricData(metric, from, to+" 23:59:59", "day", agg)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -251,7 +233,6 @@ func buildServer(db *storage.DB) *server.MCPServer {
 			return mcp.NewToolResultText("not enough data points to detect anomalies"), nil
 		}
 
-		// Compute mean and stddev
 		var sum float64
 		for _, p := range points {
 			sum += p.Qty
@@ -269,9 +250,8 @@ func buildServer(db *storage.DB) *server.MCPServer {
 			Date   string  `json:"date"`
 			Value  float64 `json:"value"`
 			ZScore float64 `json:"z_score"`
-			Type   string  `json:"type"` // "high" or "low"
+			Type   string  `json:"type"`
 		}
-
 		var anomalies []anomaly
 		for _, p := range points {
 			z := (p.Qty - mean) / stddev
@@ -285,17 +265,12 @@ func buildServer(db *storage.DB) *server.MCPServer {
 		}
 
 		return jsonResult(map[string]any{
-			"metric":    metric,
-			"from":      from,
-			"to":        to,
-			"mean":      math.Round(mean*100) / 100,
-			"stddev":    math.Round(stddev*100) / 100,
-			"sigma":     sigma,
-			"anomalies": anomalies,
+			"metric": metric, "from": from, "to": to,
+			"mean": math.Round(mean*100) / 100, "stddev": math.Round(stddev*100) / 100,
+			"sigma": sigma, "anomalies": anomalies,
 		})
 	})
 
-	// get_weekly_summary
 	s.AddTool(mcp.NewTool("get_weekly_summary",
 		mcp.WithDescription("Weekly aggregates for one or more metrics. Good for spotting week-over-week trends."),
 		mcp.WithString("metrics", mcp.Required(), mcp.Description("Comma-separated metric names, e.g. 'step_count,heart_rate,sleep_total'")),
@@ -331,22 +306,18 @@ func buildServer(db *storage.DB) *server.MCPServer {
 			}
 			result[metric] = map[string]any{"agg": agg, "weeks": rows}
 		}
-
 		return jsonResult(map[string]any{"from": from, "to": to, "data": result})
 	})
 
-	// get_personal_records
 	s.AddTool(mcp.NewTool("get_personal_records",
 		mcp.WithDescription("Best (max) and worst (min) values ever recorded for each metric, with the date they occurred."),
 		mcp.WithString("metric", mcp.Description("Filter to a single metric. If omitted, returns records for all metrics.")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		metric := req.GetString("metric", "")
-
 		whereMetric := ""
 		if metric != "" {
 			whereMetric = fmt.Sprintf("AND m.metric_name = '%s'", metric)
 		}
-
 		rows, err := db.QueryReadOnly(fmt.Sprintf(
 			`SELECT m.metric_name, m.units,
 			        mx.max_qty as best_value,  substr(mxd.date,1,10) as best_date,
@@ -367,59 +338,4 @@ func buildServer(db *storage.DB) *server.MCPServer {
 		}
 		return jsonResult(rows)
 	})
-
-	// sql_query
-	s.AddTool(mcp.NewTool("sql_query",
-		mcp.WithDescription(`Run a read-only SQL SELECT on the health database. Use when other tools don't cover your query.
-
-Schema:
-  metric_points(
-    id               INTEGER,
-    health_record_id INTEGER,   -- FK to health_records.id
-    metric_name      TEXT,      -- e.g. 'heart_rate', 'step_count', 'sleep_total'
-    units            TEXT,      -- e.g. 'count/min', 'count', 'kcal', 'hr'
-    date             TEXT,      -- "YYYY-MM-DD HH:MM:SS +HHMM" — use substr(date,1,10) for day
-    qty              REAL,      -- the measured value
-    source           TEXT       -- data source app/device
-  )
-  health_records(
-    id               INTEGER,
-    received_at      DATETIME,  -- when the server received the payload
-    automation_name  TEXT,
-    session_id       TEXT
-  )
-
-Key metrics: heart_rate, resting_heart_rate, heart_rate_variability, blood_oxygen_saturation,
-  step_count, active_energy, basal_energy_burned, walking_running_distance, apple_exercise_time,
-  sleep_total, sleep_deep, sleep_rem, sleep_core, sleep_awake,
-  respiratory_rate, apple_sleeping_wrist_temperature, vo2_max
-
-Notes:
-  - Always filter qty > 0 to exclude zero-value placeholders
-  - Date comparison: use substr(date,1,10) >= '2026-01-01' (NOT strftime — TZ offset breaks it)
-  - SUM metrics: step_count, active_energy, basal_energy_burned, apple_exercise_time,
-      apple_stand_time, flights_climbed, walking_running_distance, time_in_daylight
-  - All others use AVG`),
-		mcp.WithString("query", mcp.Required(), mcp.Description("SQL SELECT query")),
-	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query := req.GetString("query", "")
-		if !strings.HasPrefix(strings.TrimSpace(strings.ToUpper(query)), "SELECT") {
-			return mcp.NewToolResultError("only SELECT queries are allowed"), nil
-		}
-		rows, err := db.QueryReadOnly(query)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("query error: %v", err)), nil
-		}
-		return jsonResult(rows)
-	})
-
-	return s
-}
-
-func jsonResult(v any) (*mcp.CallToolResult, error) {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	return mcp.NewToolResultText(string(data)), nil
 }

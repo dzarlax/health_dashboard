@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"health-receiver/internal/storage"
@@ -30,9 +31,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/login", h.login)
 	mux.HandleFunc("/", h.guard(h.page))
 	mux.HandleFunc("/api/metrics", h.guard(h.listMetrics))
+	mux.HandleFunc("/api/metrics/latest", h.guard(h.latestMetricValues))
 	mux.HandleFunc("/api/metrics/data", h.guard(h.metricData))
 	mux.HandleFunc("/api/dashboard", h.guard(h.dashboard))
 	mux.HandleFunc("/api/health-briefing", h.guard(h.healthBriefing))
+	mux.HandleFunc("/api/readiness-history", h.guard(h.readinessHistory))
 }
 
 func (h *Handler) guard(next http.HandlerFunc) http.HandlerFunc {
@@ -96,6 +99,15 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, metrics)
 }
 
+func (h *Handler) latestMetricValues(w http.ResponseWriter, r *http.Request) {
+	vals, err := h.db.GetLatestMetricValues()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, vals)
+}
+
 func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.db.GetDashboard()
 	if err != nil {
@@ -149,6 +161,20 @@ func (h *Handler) metricData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if q.Get("by_source") == "1" {
+		sourcePoints, serr := h.db.GetMetricDataBySource(metric, from, to+" 23:59:59", bucket, aggFunc)
+		if serr == nil {
+			jsonResponse(w, map[string]any{
+				"metric":           metric,
+				"bucket":           bucket,
+				"agg":              aggFunc,
+				"by_source":        true,
+				"points_by_source": sourcePoints,
+			})
+			return
+		}
+	}
+
 	points, err := h.db.GetMetricData(metric, from, to+" 23:59:59", bucket, aggFunc)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -161,6 +187,21 @@ func (h *Handler) metricData(w http.ResponseWriter, r *http.Request) {
 		"agg":    aggFunc,
 		"points": points,
 	})
+}
+
+func (h *Handler) readinessHistory(w http.ResponseWriter, r *http.Request) {
+	days := 30
+	if d := r.URL.Query().Get("days"); d != "" {
+		if n, err := strconv.Atoi(d); err == nil && n > 0 && n <= 365 {
+			days = n
+		}
+	}
+	pts, err := h.db.GetReadinessHistory(days)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{"points": pts})
 }
 
 func (h *Handler) healthBriefing(w http.ResponseWriter, r *http.Request) {
