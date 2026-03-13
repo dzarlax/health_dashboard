@@ -678,9 +678,9 @@ select:focus, input[type=date]:focus { outline: none; border-color: var(--accent
 .admin-field-row { display: flex; flex-direction: column; gap: 4px; }
 .admin-field-row-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .admin-field-half { display: flex; flex-direction: column; gap: 4px; }
-.admin-field-label { font-size: 12px; color: #64748b; }
-.admin-field-input { background: #1a1d2e; border: 1px solid #252836; color: #e2e8f0; padding: 8px 12px; border-radius: 8px; font-size: 14px; outline: none; width: 100%; }
-.admin-field-input:focus { border-color: #4f8ef7; }
+.admin-field-label { font-size: 12px; color: var(--muted); }
+.admin-field-input { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 8px; font-size: 14px; outline: none; width: 100%; }
+.admin-field-input:focus { border-color: var(--accent); }
 .admin-field-group-title { font-size: 12px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 6px; }
 .admin-settings-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 `
