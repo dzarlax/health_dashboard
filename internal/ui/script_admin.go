@@ -21,10 +21,13 @@ function hideAdminView() {
 function loadAdminStatus() {
   $('admin-loading').style.display = 'flex';
   $('admin-body').style.display = 'none';
-  fetch('/api/admin/status')
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      renderAdminStatus(d);
+  Promise.all([
+    fetch('/api/admin/status').then(function(r) { return r.json(); }),
+    fetch('/api/admin/settings').then(function(r) { return r.json(); })
+  ])
+    .then(function(results) {
+      renderAdminStatus(results[0]);
+      renderNotifySettings(results[1]);
       $('admin-loading').style.display = 'none';
       $('admin-body').style.display = 'block';
     })
@@ -33,11 +36,53 @@ function loadAdminStatus() {
     });
 }
 
+function renderNotifySettings(s) {
+  $('cfg-telegram-token').value    = s.telegram_token || '';
+  $('cfg-telegram-chat-id').value  = s.telegram_chat_id || '';
+  $('cfg-report-lang').value       = s.report_lang || 'en';
+  $('cfg-morning-weekday').value   = s.report_morning_weekday != null ? s.report_morning_weekday : 8;
+  $('cfg-morning-weekend').value   = s.report_morning_weekend != null ? s.report_morning_weekend : 9;
+  $('cfg-evening-weekday').value   = s.report_evening_weekday != null ? s.report_evening_weekday : 20;
+  $('cfg-evening-weekend').value   = s.report_evening_weekend != null ? s.report_evening_weekend : 21;
+}
+
+function saveNotifySettings() {
+  var btn = $('btn-settings-save');
+  btn.disabled = true;
+  var msg = $('admin-notify-msg');
+  msg.style.display = 'none';
+
+  var payload = {
+    telegram_token:          $('cfg-telegram-token').value.trim(),
+    telegram_chat_id:        $('cfg-telegram-chat-id').value.trim(),
+    report_lang:             $('cfg-report-lang').value,
+    report_morning_weekday:  $('cfg-morning-weekday').value,
+    report_morning_weekend:  $('cfg-morning-weekend').value,
+    report_evening_weekday:  $('cfg-evening-weekday').value,
+    report_evening_weekend:  $('cfg-evening-weekend').value,
+  };
+
+  fetch('/api/admin/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      msg.textContent = d.status === 'ok' ? t('admin_notify_saved') : (d.message || 'Error');
+      msg.className = d.status === 'ok' ? 'admin-msg-ok' : 'admin-msg-err';
+      msg.style.display = 'block';
+      btn.disabled = false;
+    })
+    .catch(function(e) {
+      msg.textContent = String(e);
+      msg.className = 'admin-msg-err';
+      msg.style.display = 'block';
+      btn.disabled = false;
+    });
+}
+
 function renderAdminStatus(d) {
-  // Show Telegram section only when configured server-side.
-  if (d.telegram_enabled) {
-    $('admin-notify-section').style.display = 'block';
-  }
 
   var rows = [
     { label: t('admin_raw'),    stat: d.raw_points,  icon: '&#128190;' },

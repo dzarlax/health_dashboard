@@ -66,7 +66,11 @@ var I18N = {
     admin_notify_title:'Telegram reports',
     admin_notify_morning_title:'Morning report', admin_notify_morning_desc:'Send a test sleep summary right now.',
     admin_notify_evening_title:'Evening report', admin_notify_evening_desc:'Send a test day summary right now.',
-    admin_notify_send:'Send test'
+    admin_notify_token:'Bot token', admin_notify_chat_id:'Chat ID', admin_notify_lang:'Language',
+    admin_notify_schedule_morning:'Morning report hour', admin_notify_schedule_evening:'Evening report hour',
+    admin_notify_weekday:'Weekdays', admin_notify_weekend:'Weekends',
+    admin_notify_save:'Save', admin_notify_saved:'Settings saved',
+    admin_notify_send:'Send test', admin_notify_test_morning:'Test morning', admin_notify_test_evening:'Test evening'
   },
   ru: {
     app_title:'\u0417\u0434\u043e\u0440\u043e\u0432\u044c\u0435', explore:'\u041f\u043e\u0438\u0441\u043a', loading:'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0434\u0430\u043d\u043d\u044b\u0445',
@@ -147,7 +151,11 @@ var I18N = {
     admin_notify_title:'Telegram-\u043e\u0442\u0447\u0451\u0442\u044b',
     admin_notify_morning_title:'\u0423\u0442\u0440\u0435\u043d\u043d\u0438\u0439 \u043e\u0442\u0447\u0451\u0442', admin_notify_morning_desc:'\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0442\u0435\u0441\u0442\u043e\u0432\u0443\u044e \u0441\u0432\u043e\u0434\u043a\u0443 \u043f\u043e \u0441\u043d\u0443 \u0441\u0435\u0439\u0447\u0430\u0441.',
     admin_notify_evening_title:'\u0412\u0435\u0447\u0435\u0440\u043d\u0438\u0439 \u043e\u0442\u0447\u0451\u0442', admin_notify_evening_desc:'\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0442\u0435\u0441\u0442\u043e\u0432\u0443\u044e \u0441\u0432\u043e\u0434\u043a\u0443 \u0437\u0430 \u0434\u0435\u043d\u044c \u0441\u0435\u0439\u0447\u0430\u0441.',
-    admin_notify_send:'\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0442\u0435\u0441\u0442'
+    admin_notify_token:'\u0422\u043e\u043a\u0435\u043d \u0431\u043e\u0442\u0430', admin_notify_chat_id:'Chat ID', admin_notify_lang:'\u042f\u0437\u044b\u043a',
+    admin_notify_schedule_morning:'\u0427\u0430\u0441 \u0443\u0442\u0440\u0435\u043d\u043d\u0435\u0433\u043e \u043e\u0442\u0447\u0451\u0442\u0430', admin_notify_schedule_evening:'\u0427\u0430\u0441 \u0432\u0435\u0447\u0435\u0440\u043d\u0435\u0433\u043e \u043e\u0442\u0447\u0451\u0442\u0430',
+    admin_notify_weekday:'\u0411\u0443\u0434\u043d\u0438', admin_notify_weekend:'\u0412\u044b\u0445\u043e\u0434\u043d\u044b\u0435',
+    admin_notify_save:'\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c', admin_notify_saved:'\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u044b',
+    admin_notify_send:'\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u0442\u0435\u0441\u0442', admin_notify_test_morning:'\u0422\u0435\u0441\u0442 \u0443\u0442\u0440\u043e', admin_notify_test_evening:'\u0422\u0435\u0441\u0442 \u0432\u0435\u0447\u0435\u0440'
   },
   sr: {
     app_title:'Zdravlje', explore:'Pretra\u017ei', loading:'U\u010ditavanje podataka',
@@ -210,7 +218,11 @@ var I18N = {
     admin_notify_title:'Telegram izve\u0161taji',
     admin_notify_morning_title:'Jutarnji izve\u0161taj', admin_notify_morning_desc:'Po\u0161alji test san sada.',
     admin_notify_evening_title:'Ve\u010dernji izve\u0161taj', admin_notify_evening_desc:'Po\u0161alji test pregled dana sada.',
-    admin_notify_send:'Po\u0161alji test'
+    admin_notify_token:'Token bota', admin_notify_chat_id:'Chat ID', admin_notify_lang:'Jezik',
+    admin_notify_schedule_morning:'Sat jutarnjeg izve\u0161taja', admin_notify_schedule_evening:'Sat ve\u010dernjeg izve\u0161taja',
+    admin_notify_weekday:'Radni dani', admin_notify_weekend:'Vikend',
+    admin_notify_save:'Sa\u010duvaj', admin_notify_saved:'Postavke sa\u010duvane',
+    admin_notify_send:'Po\u0161alji test', admin_notify_test_morning:'Test jutro', admin_notify_test_evening:'Test ve\u010de'
   }
 };
 function t(key) {

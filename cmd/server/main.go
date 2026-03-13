@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -60,8 +61,8 @@ func main() {
 		}()
 	}
 
-	// Start Telegram report scheduler if credentials are configured.
-	notifyCfg := notify.Config{
+	// Env-derived defaults for notify config (DB settings take priority at runtime).
+	notifyDefaults := storage.NotifyConfig{
 		Token:              os.Getenv("TELEGRAM_TOKEN"),
 		ChatID:             os.Getenv("TELEGRAM_CHAT_ID"),
 		Lang:               getEnv("REPORT_LANG", "en"),
@@ -70,22 +71,26 @@ func main() {
 		EveningWeekdayHour: getEnvInt("REPORT_EVENING_WEEKDAY", 20),
 		EveningWeekendHour: getEnvInt("REPORT_EVENING_WEEKEND", 21),
 	}
-	var testNotifyFn func(kind string) error
-	if notifyCfg.Enabled() {
-		log.Println("Telegram reports enabled")
-		go runReportScheduler(db, notifyCfg)
-		bot := notify.NewBot(notifyCfg.Token, notifyCfg.ChatID)
-		testNotifyFn = func(kind string) error {
-			if kind == "evening" {
-				return notify.SendEvening(bot, db, notifyCfg.Lang)
-			}
-			return notify.SendMorning(bot, db, notifyCfg.Lang)
+
+	// Always start scheduler — it re-reads config from DB each iteration.
+	go runReportScheduler(db, notifyDefaults)
+
+	// testNotify reads fresh config from DB on every call.
+	testNotifyFn := func(kind string) error {
+		cfg := db.GetNotifyConfig(notifyDefaults)
+		if !cfg.Enabled() {
+			return fmt.Errorf("Telegram not configured: set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID")
 		}
+		bot := notify.NewBot(cfg.Token, cfg.ChatID)
+		if kind == "evening" {
+			return notify.SendEvening(bot, db, cfg.Lang)
+		}
+		return notify.SendMorning(bot, db, cfg.Lang)
 	}
 
 	mux := http.NewServeMux()
 	handler.New(db, apiKey, onNewData).Register(mux)
-	ui.New(db, uiPassword, backfillFn, testNotifyFn).Register(mux)
+	ui.New(db, uiPassword, backfillFn, testNotifyFn, notifyDefaults).Register(mux)
 	mcpserver.Register(mux, db, baseURL, apiKey)
 
 	logged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -148,19 +153,32 @@ func (s *backfillScheduler) run() {
 }
 
 // runReportScheduler fires morning and evening Telegram reports on schedule.
-func runReportScheduler(db *storage.DB, cfg notify.Config) {
-	bot := notify.NewBot(cfg.Token, cfg.ChatID)
+// It re-reads config from DB on every iteration so settings changes take effect
+// without a server restart.
+func runReportScheduler(db *storage.DB, defaults storage.NotifyConfig) {
 	for {
-		now := time.Now()
-		nextMorning := cfg.NextMorning(now)
-		nextEvening := cfg.NextEvening(now)
+		cfg := db.GetNotifyConfig(defaults)
+		if !cfg.Enabled() {
+			time.Sleep(5 * time.Minute) // retry when credentials are configured
+			continue
+		}
 
-		var next time.Time
+		ncfg := notify.Config{
+			Token: cfg.Token, ChatID: cfg.ChatID, Lang: cfg.Lang,
+			MorningWeekdayHour: cfg.MorningWeekdayHour,
+			MorningWeekendHour: cfg.MorningWeekendHour,
+			EveningWeekdayHour: cfg.EveningWeekdayHour,
+			EveningWeekendHour: cfg.EveningWeekendHour,
+		}
+
+		now := time.Now()
+		nextMorning := ncfg.NextMorning(now)
+		nextEvening := ncfg.NextEvening(now)
+
 		isMorning := nextMorning.Before(nextEvening)
+		next := nextEvening
 		if isMorning {
 			next = nextMorning
-		} else {
-			next = nextEvening
 		}
 
 		log.Printf("report scheduler: next %s report at %s",
@@ -169,6 +187,12 @@ func runReportScheduler(db *storage.DB, cfg notify.Config) {
 
 		time.Sleep(time.Until(next))
 
+		// Re-read config after sleep — credentials may have changed.
+		cfg = db.GetNotifyConfig(defaults)
+		if !cfg.Enabled() {
+			continue
+		}
+		bot := notify.NewBot(cfg.Token, cfg.ChatID)
 		if isMorning {
 			log.Println("report scheduler: sending morning report…")
 			if err := notify.SendMorning(bot, db, cfg.Lang); err != nil {

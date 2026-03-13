@@ -13,20 +13,21 @@ import (
 )
 
 type Handler struct {
-	db          *storage.DB
-	password    string // empty = no auth
-	token       string // sha256(password), used as cookie value
-	backfill    func(force bool)
-	testNotify  func(kind string) error // nil when Telegram not configured
+	db             *storage.DB
+	password       string // empty = no auth
+	token          string // sha256(password), used as cookie value
+	backfill       func(force bool)
+	testNotify     func(kind string) error
+	notifyDefaults storage.NotifyConfig
 }
 
-func New(db *storage.DB, password string, backfill func(force bool), testNotify func(kind string) error) *Handler {
+func New(db *storage.DB, password string, backfill func(force bool), testNotify func(kind string) error, notifyDefaults storage.NotifyConfig) *Handler {
 	var token string
 	if password != "" {
 		h := sha256.Sum256([]byte(password))
 		token = hex.EncodeToString(h[:])
 	}
-	return &Handler{db: db, password: password, token: token, backfill: backfill, testNotify: testNotify}
+	return &Handler{db: db, password: password, token: token, backfill: backfill, testNotify: testNotify, notifyDefaults: notifyDefaults}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -41,6 +42,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/status", h.guard(h.adminStatus))
 	mux.HandleFunc("/api/admin/backfill", h.guard(h.adminBackfill))
 	mux.HandleFunc("/api/admin/test-notify", h.guard(h.adminTestNotify))
+	mux.HandleFunc("/api/admin/settings", h.guard(h.adminSettings))
 }
 
 func (h *Handler) guard(next http.HandlerFunc) http.HandlerFunc {
@@ -248,6 +250,46 @@ func (h *Handler) adminBackfill(w http.ResponseWriter, r *http.Request) {
 		msg = "full rebuild started"
 	}
 	jsonResponse(w, map[string]string{"status": "ok", "message": msg})
+}
+
+func (h *Handler) adminSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		allowed := map[string]bool{
+			"telegram_token": true, "telegram_chat_id": true, "report_lang": true,
+			"report_morning_weekday": true, "report_morning_weekend": true,
+			"report_evening_weekday": true, "report_evening_weekend": true,
+		}
+		clean := make(map[string]string)
+		for k, v := range body {
+			if allowed[k] {
+				clean[k] = v
+			}
+		}
+		if err := h.db.SaveSettings(clean); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]string{"status": "ok"})
+		return
+	}
+
+	// GET — return current effective config (DB values, falling back to env defaults).
+	cfg := h.db.GetNotifyConfig(h.notifyDefaults)
+	jsonResponse(w, map[string]any{
+		"telegram_token":          cfg.Token,
+		"telegram_chat_id":        cfg.ChatID,
+		"report_lang":             cfg.Lang,
+		"report_morning_weekday":  cfg.MorningWeekdayHour,
+		"report_morning_weekend":  cfg.MorningWeekendHour,
+		"report_evening_weekday":  cfg.EveningWeekdayHour,
+		"report_evening_weekend":  cfg.EveningWeekendHour,
+		"enabled":                 cfg.Enabled(),
+	})
 }
 
 func (h *Handler) adminTestNotify(w http.ResponseWriter, r *http.Request) {

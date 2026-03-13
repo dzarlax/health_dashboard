@@ -83,6 +83,14 @@ func (s *DB) migrate() error {
 		max_val     REAL NOT NULL,
 		PRIMARY KEY (metric_name, hour, source)
 	)`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS settings (
+		key        TEXT NOT NULL PRIMARY KEY,
+		value      TEXT NOT NULL DEFAULT '',
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`)
 	return err
 }
 

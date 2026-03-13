@@ -171,23 +171,57 @@ const htmlBody = `
           <div id="admin-msg" style="display:none"></div>
         </div>
 
-        <div class="admin-section" id="admin-notify-section" style="display:none">
+        <div class="admin-section" id="admin-notify-section">
           <div class="section-title" data-i18n="admin_notify_title">Telegram reports</div>
-          <div class="admin-actions">
-            <div class="admin-action-card">
-              <div class="admin-action-title" data-i18n="admin_notify_morning_title">Morning report</div>
-              <div class="admin-action-desc" data-i18n="admin_notify_morning_desc">Send a test sleep summary right now.</div>
-              <button class="admin-btn primary" onclick="triggerTestNotify('morning')" id="btn-notify-morning">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.65 3.4 2 2 0 0 1 3.62 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.6a16 16 0 0 0 6 6l.96-.96a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-                <span data-i18n="admin_notify_send">Send test</span>
-              </button>
+          <div class="admin-settings-form">
+            <div class="admin-field-row">
+              <label class="admin-field-label" data-i18n="admin_notify_token">Bot token</label>
+              <input class="admin-field-input" type="password" id="cfg-telegram-token" autocomplete="off" placeholder="123456:ABC-DEF...">
             </div>
-            <div class="admin-action-card">
-              <div class="admin-action-title" data-i18n="admin_notify_evening_title">Evening report</div>
-              <div class="admin-action-desc" data-i18n="admin_notify_evening_desc">Send a test day summary right now.</div>
-              <button class="admin-btn primary" onclick="triggerTestNotify('evening')" id="btn-notify-evening">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.65 3.4 2 2 0 0 1 3.62 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.6a16 16 0 0 0 6 6l.96-.96a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-                <span data-i18n="admin_notify_send">Send test</span>
+            <div class="admin-field-row">
+              <label class="admin-field-label" data-i18n="admin_notify_chat_id">Chat ID</label>
+              <input class="admin-field-input" type="text" id="cfg-telegram-chat-id" autocomplete="off" placeholder="123456789">
+            </div>
+            <div class="admin-field-row">
+              <label class="admin-field-label" data-i18n="admin_notify_lang">Language</label>
+              <select class="admin-field-input" id="cfg-report-lang">
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+                <option value="sr">Srpski</option>
+              </select>
+            </div>
+            <div class="admin-field-group-title" data-i18n="admin_notify_schedule_morning">Morning report</div>
+            <div class="admin-field-row-pair">
+              <div class="admin-field-half">
+                <label class="admin-field-label" data-i18n="admin_notify_weekday">Weekdays</label>
+                <input class="admin-field-input" type="number" id="cfg-morning-weekday" min="0" max="23" placeholder="8">
+              </div>
+              <div class="admin-field-half">
+                <label class="admin-field-label" data-i18n="admin_notify_weekend">Weekends</label>
+                <input class="admin-field-input" type="number" id="cfg-morning-weekend" min="0" max="23" placeholder="9">
+              </div>
+            </div>
+            <div class="admin-field-group-title" data-i18n="admin_notify_schedule_evening">Evening report</div>
+            <div class="admin-field-row-pair">
+              <div class="admin-field-half">
+                <label class="admin-field-label" data-i18n="admin_notify_weekday">Weekdays</label>
+                <input class="admin-field-input" type="number" id="cfg-evening-weekday" min="0" max="23" placeholder="20">
+              </div>
+              <div class="admin-field-half">
+                <label class="admin-field-label" data-i18n="admin_notify_weekend">Weekends</label>
+                <input class="admin-field-input" type="number" id="cfg-evening-weekend" min="0" max="23" placeholder="21">
+              </div>
+            </div>
+            <div class="admin-settings-actions">
+              <button class="admin-btn primary" onclick="saveNotifySettings()" id="btn-settings-save">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                <span data-i18n="admin_notify_save">Save</span>
+              </button>
+              <button class="admin-btn" onclick="triggerTestNotify('morning')" id="btn-notify-morning">
+                🌅 <span data-i18n="admin_notify_test_morning">Test morning</span>
+              </button>
+              <button class="admin-btn" onclick="triggerTestNotify('evening')" id="btn-notify-evening">
+                🌆 <span data-i18n="admin_notify_test_evening">Test evening</span>
               </button>
             </div>
           </div>
