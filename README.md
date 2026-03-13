@@ -6,27 +6,27 @@ Self-hosted server that receives data from the [Health Auto Export](https://www.
 
 ```mermaid
 flowchart TD
-    App["📱 Health Auto Export\n(iOS)"]
+    App["📱 Health Auto Export (iOS)"]
 
     subgraph Server["Go Server"]
-        H["/health\nPOST handler"]
-        UI["Web Dashboard\n/ UI"]
-        MCP["/mcp\nMCP Server"]
-        BF["Backfill Scheduler\n(debounced 2 min)"]
+        H["/health POST handler"]
+        UI["Web Dashboard"]
+        MCP["/mcp MCP Server"]
+        BF["Backfill Scheduler (debounced 2 min)"]
     end
 
     subgraph SQLite["SQLite Database"]
-        HR[("health_records\nraw JSON payloads")]
-        MP[("metric_points\nparsed time series")]
-        MM[("minute_metrics\npre-aggregated")]
-        HM[("hourly_metrics\npre-aggregated")]
-        DS[("daily_scores\ndaily rollups +\nreadiness scores")]
+        HR[("health_records")]
+        MP[("metric_points")]
+        MM[("minute_metrics")]
+        HM[("hourly_metrics")]
+        DS[("daily_scores")]
     end
 
     Claude["🤖 Claude / AI"]
     Browser["🌐 Browser"]
 
-    App -->|"POST /health\nX-API-Key"| H
+    App -->|"POST /health X-API-Key"| H
     H --> HR
     H --> MP
     H -->|"trigger"| BF
