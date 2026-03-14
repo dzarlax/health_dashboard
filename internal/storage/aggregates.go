@@ -18,15 +18,12 @@ func aggFuncFor(metric string) string {
 
 // combineFuncFor returns the SQL aggregate to combine per-source pre-computed
 // values when merging sources at query time.
-//   - sleep SUM metrics: MAX(per-source sum) avoids double-counting two wearables
-//   - other SUM metrics: SUM — each source is independent (HealthKit deduplicates)
+//   - SUM metrics: MAX(per-source sum) avoids double-counting overlapping devices
+//     (Apple Watch + iPhone + RingConn all count the same steps/calories/sleep)
 //   - AVG metrics: AVG
 func combineFuncFor(metric string) string {
 	if SumMetrics[metric] {
-		if strings.HasPrefix(metric, "sleep_") {
-			return "MAX"
-		}
-		return "SUM"
+		return "MAX"
 	}
 	return "AVG"
 }
@@ -120,28 +117,27 @@ func (s *DB) BackfillAggregates(force bool) error {
 // Existing readiness/score_version columns are not touched.
 func (s *DB) BuildDailyMetrics(force bool) error {
 	type spec struct {
-		col   string
-		name  string
-		sleep bool // needs MAX(source_sum) dedup across devices
+		col  string
+		name string
 	}
 	specs := []spec{
-		{"hrv_avg", "heart_rate_variability", false},
-		{"rhr_avg", "resting_heart_rate", false},
-		{"sleep_total", "sleep_total", true},
-		{"sleep_deep", "sleep_deep", true},
-		{"sleep_rem", "sleep_rem", true},
-		{"sleep_core", "sleep_core", true},
-		{"sleep_awake", "sleep_awake", true},
-		{"steps", "step_count", false},
-		{"calories", "active_energy", false},
-		{"exercise_min", "apple_exercise_time", false},
-		{"spo2_avg", "blood_oxygen_saturation", false},
-		{"vo2_avg", "vo2_max", false},
-		{"resp_avg", "respiratory_rate", false},
+		{"hrv_avg", "heart_rate_variability"},
+		{"rhr_avg", "resting_heart_rate"},
+		{"sleep_total", "sleep_total"},
+		{"sleep_deep", "sleep_deep"},
+		{"sleep_rem", "sleep_rem"},
+		{"sleep_core", "sleep_core"},
+		{"sleep_awake", "sleep_awake"},
+		{"steps", "step_count"},
+		{"calories", "active_energy"},
+		{"exercise_min", "apple_exercise_time"},
+		{"spo2_avg", "blood_oxygen_saturation"},
+		{"vo2_avg", "vo2_max"},
+		{"resp_avg", "respiratory_rate"},
 	}
 
 	for _, sp := range specs {
-		if err := s.buildDailyMetricCol(sp.col, sp.name, sp.sleep, force); err != nil {
+		if err := s.buildDailyMetricCol(sp.col, sp.name, force); err != nil {
 			log.Printf("  daily %s (%s): %v", sp.col, sp.name, err)
 		}
 	}
@@ -149,7 +145,7 @@ func (s *DB) BuildDailyMetrics(force bool) error {
 	return nil
 }
 
-func (s *DB) buildDailyMetricCol(col, metric string, isSleep, force bool) error {
+func (s *DB) buildDailyMetricCol(col, metric string, force bool) error {
 	var fromClause string
 	if !force {
 		// Only fill dates that don't have this column set yet.
@@ -163,9 +159,13 @@ func (s *DB) buildDailyMetricCol(col, metric string, isSleep, force bool) error 
 	}
 
 	var query string
-	if isSleep {
-		// For sleep metrics two devices each record the same night independently.
-		// Per source: SUM hours across day. Across sources: MAX to avoid double-count.
+	if SumMetrics[metric] {
+		// SUM metrics (steps, calories, sleep, etc.) are recorded by multiple
+		// devices that overlap (Apple Watch + iPhone + RingConn all count
+		// the same steps). HealthKit deduplicates on-device, but after Apple
+		// Health XML import raw records from every source end up in the DB.
+		// Per source: SUM values across the day. Across sources: MAX to pick
+		// the most complete source and avoid double-counting.
 		query = fmt.Sprintf(`
 			SELECT day, MAX(src_sum) FROM (
 				SELECT substr(hour,1,10) AS day, source, SUM(avg_val) AS src_sum
@@ -175,12 +175,11 @@ func (s *DB) buildDailyMetricCol(col, metric string, isSleep, force bool) error 
 			)
 			GROUP BY day`, fromClause)
 	} else {
-		agg := aggFuncFor(metric)
 		query = fmt.Sprintf(`
-			SELECT substr(hour,1,10), %s(avg_val)
+			SELECT substr(hour,1,10), AVG(avg_val)
 			FROM hourly_metrics
 			WHERE metric_name = ? %s
-			GROUP BY substr(hour,1,10)`, agg, fromClause)
+			GROUP BY substr(hour,1,10)`, fromClause)
 	}
 
 	rows, err := s.db.Query(query, metric)
@@ -204,6 +203,13 @@ func (s *DB) buildDailyMetricCol(col, metric string, isSleep, force bool) error 
 	return rows.Err()
 }
 
+// isSleepMetric returns true for sleep_* metrics that may have both a midnight
+// summary record and individual fragment records from different data sources
+// (Health Auto Export vs Apple Health XML import).
+func isSleepMetric(metric string) bool {
+	return strings.HasPrefix(metric, "sleep_")
+}
+
 // buildMinuteMetric fills minute_metrics for one metric by reading metric_points.
 // Level 1 of the cascade.
 func (s *DB) buildMinuteMetric(metric, agg string, force bool) error {
@@ -219,6 +225,25 @@ func (s *DB) buildMinuteMetric(metric, agg string, force bool) error {
 		}
 	}
 
+	// For sleep metrics, Health Auto Export writes a single summary at 00:00:00
+	// while Apple Health XML import writes individual fragments with real timestamps.
+	// When both exist for the same day+source, exclude the midnight summary to
+	// avoid double-counting.
+	sleepDedup := ""
+	if isSleepMetric(metric) {
+		sleepDedup = `AND NOT (
+			substr(date, 12, 8) = '00:00:00'
+			AND EXISTS (
+				SELECT 1 FROM metric_points p2
+				WHERE p2.metric_name = metric_points.metric_name
+				  AND substr(p2.date, 1, 10) = substr(metric_points.date, 1, 10)
+				  AND p2.source = metric_points.source
+				  AND substr(p2.date, 12, 8) != '00:00:00'
+				  AND p2.qty > 0
+			)
+		)`
+	}
+
 	_, err := s.db.Exec(fmt.Sprintf(`
 		INSERT OR REPLACE INTO minute_metrics (metric_name, minute, source, avg_val, min_val, max_val)
 		SELECT metric_name,
@@ -226,9 +251,9 @@ func (s *DB) buildMinuteMetric(metric, agg string, force bool) error {
 		       source,
 		       %s(qty), MIN(qty), MAX(qty)
 		FROM metric_points
-		WHERE metric_name = ? AND qty > 0 %s
+		WHERE metric_name = ? AND qty > 0 %s %s
 		GROUP BY metric_name, minute, source
-	`, agg, fromClause), metric)
+	`, agg, sleepDedup, fromClause), metric)
 	return err
 }
 
