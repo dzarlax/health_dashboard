@@ -111,7 +111,7 @@ Available at `/` — password protected if `UI_PASSWORD` is set.
 
 Features:
 - **Dashboard** — today's metrics with trend vs yesterday, sparklines, and featured 7-day charts
-- **Health Briefing** — AI-style daily summary with readiness score, sleep analysis, and insights
+- **Health Briefing** — AI-style daily summary with readiness score, sleep analysis, insights, and health alerts (respiratory rate, wrist temperature, HRV variability anomalies)
 - **Metrics view** — full list of available metrics with latest values; click any to open its chart
 - **Metric charts** — time series with auto-bucketing (minute / hour / day)
 - **Settings** — cache status, backfill controls, Telegram notification config, data gap detection, and Apple Health import (gear icon, top-right)
@@ -142,8 +142,8 @@ Available tools:
 
 | Tool | Description |
 |---|---|
-| `get_health_briefing` | Full daily health briefing: readiness score, sleep analysis, HRV/RHR recovery, activity, and insights. Best starting point. Supports `lang` (en/ru/sr). |
-| `get_readiness_history` | Daily readiness scores (0–100) for the last N days. Score combines HRV trend, RHR, and sleep vs personal baseline. |
+| `get_health_briefing` | Full daily health briefing: readiness score (7-day HRV/RHR/sleep vs personal baseline), sleep analysis, activity, insights, and health alerts (RR/temperature/HRV anomalies). Best starting point. Supports `lang` (en/ru/sr). |
+| `get_readiness_history` | Daily readiness scores (0–100) for the last N days. Score combines 7-day HRV trend, RHR, and sleep vs personal baseline. Includes oversleep penalty. |
 | `list_metrics` | List all available metrics with record counts and date ranges. |
 | `get_dashboard` | Today's summary: steps, calories, heart rate, SpO₂, HRV, sleep. Includes trend vs yesterday. |
 | `get_metric_data` | Time series for a single metric. Supports minute / hour / day buckets and AVG / SUM / MIN / MAX aggregation. |
@@ -172,7 +172,7 @@ You can import a full Apple Health export (the `export.xml` or `.zip` from iPhon
 make import FILE=path/to/export.zip
 ```
 
-The import streams the XML to avoid memory issues with large files. It can also be done via the web UI: Settings → Import.
+The import streams the XML to avoid memory issues with large files. It can also be done via the web UI: Settings → Import. Percentage metrics (SpO₂, body fat, walking asymmetry, etc.) are automatically normalized from Apple Health's fraction format (0.96) to percentage scale (96%) during import.
 
 ## Maintenance
 

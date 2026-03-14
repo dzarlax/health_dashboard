@@ -118,4 +118,9 @@ var en = LangStrings{
 	"insight_sleep_active":  "You sleep %.1f hrs on active days vs %.1f hrs on rest days — activity helps your sleep.",
 	"insight_sleep_rest":    "You sleep better on rest days (%.1f hrs vs %.1f hrs). Evening activity might be affecting sleep.",
 	"insight_overtrain":     "Your activity is high despite signs of exhaustion. Risk of overtraining is elevated.",
+
+	// Alerts
+	"alert_rr_anomaly":         "Respiratory rate deviates significantly from your baseline. This can be an early sign of illness or stress.",
+	"alert_wrist_temp_anomaly": "Wrist temperature deviates significantly from your baseline. This may indicate fever, inflammation, or hormonal changes.",
+	"alert_hrv_cv_high":        "Your 7-day HRV variability is high (CV %.0f%%), suggesting inconsistent recovery. Consider reviewing sleep quality and stress levels.",
 }

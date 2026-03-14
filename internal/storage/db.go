@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -59,6 +60,12 @@ func (s *DB) migrate() error {
 	if err != nil {
 		return err
 	}
+	if err := s.migrateMetricNames(); err != nil {
+		return err
+	}
+	if err := s.migrateFractionToPercent(); err != nil {
+		return err
+	}
 	if err := s.migrateDailyScores(); err != nil {
 		return err
 	}
@@ -92,6 +99,81 @@ func (s *DB) migrate() error {
 		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 	)`)
 	return err
+}
+
+// migrateMetricNames renames legacy metric names to canonical ones.
+// Idempotent: only affects rows with old names. If a rename would create a
+// duplicate (same metric_name+date+source already exists), the old row is
+// deleted instead of renamed.
+func (s *DB) migrateMetricNames() error {
+	renames := [][2]string{
+		{"heart_rate_variability_sdnn", "heart_rate_variability"},
+		{"oxygen_saturation", "blood_oxygen_saturation"},
+	}
+	for _, r := range renames {
+		old, canonical := r[0], r[1]
+		// Check if any rows with the old name exist (fast path: skip if nothing to do).
+		var cnt int
+		s.db.QueryRow(`SELECT COUNT(*) FROM metric_points WHERE metric_name = ?`, old).Scan(&cnt)
+		if cnt == 0 {
+			continue
+		}
+		// Delete old-name rows that would conflict with existing canonical-name rows.
+		if _, err := s.db.Exec(`
+			DELETE FROM metric_points
+			WHERE metric_name = ?
+			  AND (date, source) IN (
+				SELECT date, source FROM metric_points WHERE metric_name = ?
+			  )`, old, canonical); err != nil {
+			return fmt.Errorf("dedup metric rename %s→%s: %w", old, canonical, err)
+		}
+		// Rename remaining old-name rows.
+		if _, err := s.db.Exec(
+			`UPDATE metric_points SET metric_name = ? WHERE metric_name = ?`,
+			canonical, old); err != nil {
+			return fmt.Errorf("rename metric %s→%s: %w", old, canonical, err)
+		}
+		// Also rename in cache tables.
+		for _, tbl := range []string{"minute_metrics", "hourly_metrics"} {
+			s.db.Exec(`DELETE FROM `+tbl+` WHERE metric_name = ?`, old)
+		}
+		log.Printf("migrated metric_points: %s → %s (%d rows)", old, canonical, cnt)
+	}
+	return nil
+}
+
+// migrateFractionToPercent fixes percentage metrics that were imported from
+// Apple Health XML as fractions (0.0–1.0) instead of percentages (0–100).
+// Idempotent: only affects rows where qty ≤ 1.0 for metrics that should be 0–100.
+// Also invalidates cache tables for affected metrics so they get recomputed.
+func (s *DB) migrateFractionToPercent() error {
+	metrics := []string{
+		"blood_oxygen_saturation",
+		"body_fat_percentage",
+		"walking_asymmetry",
+		"walking_double_support",
+		"walking_steadiness",
+	}
+	for _, m := range metrics {
+		var cnt int
+		s.db.QueryRow(
+			`SELECT COUNT(*) FROM metric_points WHERE metric_name = ? AND qty > 0 AND qty <= 1.0`, m,
+		).Scan(&cnt)
+		if cnt == 0 {
+			continue
+		}
+		if _, err := s.db.Exec(
+			`UPDATE metric_points SET qty = qty * 100 WHERE metric_name = ? AND qty > 0 AND qty <= 1.0`, m,
+		); err != nil {
+			return fmt.Errorf("migrate fraction→percent %s: %w", m, err)
+		}
+		// Invalidate caches for this metric.
+		for _, tbl := range []string{"minute_metrics", "hourly_metrics"} {
+			s.db.Exec(`DELETE FROM `+tbl+` WHERE metric_name = ?`, m)
+		}
+		log.Printf("migrated %s: %d rows fraction→percent (×100)", m, cnt)
+	}
+	return nil
 }
 
 // migrateDailyScores creates or upgrades the daily_scores table.

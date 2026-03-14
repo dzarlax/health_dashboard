@@ -14,9 +14,10 @@ type RawMetrics struct {
 	Steps    []float64
 	Cal      []float64
 	Exercise []float64
-	SpO2     []float64
-	VO2      []float64
-	Resp     []float64
+	SpO2      []float64
+	VO2       []float64
+	Resp      []float64
+	WristTemp []float64
 	// For correlation chart
 	StepsWithDates []DatedValue
 	HRVWithDates   []DatedValue
@@ -86,6 +87,13 @@ type ReadinessPoint struct {
 	Score int    `json:"score"`
 }
 
+// Alert is a health anomaly notification (not a score component).
+type Alert struct {
+	Text     string `json:"text"`
+	Severity string `json:"severity"` // "warning", "critical"
+	Metric   string `json:"metric"`   // "respiratory_rate", "wrist_temperature", "hrv_cv"
+}
+
 type BriefingResponse struct {
 	Date           string             `json:"date"`
 	Greeting       string             `json:"greeting"`
@@ -98,6 +106,7 @@ type BriefingResponse struct {
 	RecoveryPct    int                `json:"recovery_pct"`
 	Correlation    []CorrelationPoint `json:"correlation"`
 	Insights       []Insight          `json:"insights"`
+	Alerts         []Alert            `json:"alerts,omitempty"`
 	Sleep          *SleepAnalysis     `json:"sleep"`
 	MetricCards    []MetricCard       `json:"metric_cards"`
 }

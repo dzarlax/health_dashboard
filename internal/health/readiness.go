@@ -9,14 +9,14 @@ func scoreRecovery(d RawMetrics, ls LangStrings) *BriefingSection {
 	sec := &BriefingSection{Key: "recovery", Title: ls["sec_recovery"], Icon: "battery"}
 	score, maxScore := 0, 0
 
-	if len(d.HRV) >= 7 {
-		recent := avg(d.HRV[:5])
-		baseline := avg(d.HRV[5:])
+	if len(d.HRV) >= 9 {
+		recent := avg(d.HRV[:7])
+		baseline := avg(d.HRV[7:])
 		pct := pctChange(recent, baseline)
 		t := trend(pct, false)
 		// Dynamic threshold: ±1 SD expressed as % of baseline.
 		// Clamped to [3%, 15%] so sparse or noisy data stays sensible.
-		sd := stddev(d.HRV[5:])
+		sd := stddev(d.HRV[7:])
 		thresholdPct := 5.0
 		if baseline > 0 && sd > 0 {
 			thresholdPct = sd / baseline * 100
@@ -44,9 +44,9 @@ func scoreRecovery(d RawMetrics, ls LangStrings) *BriefingSection {
 		})
 	}
 
-	if len(d.RHR) >= 7 {
-		recent := avg(d.RHR[:5])
-		baseline := avg(d.RHR[5:])
+	if len(d.RHR) >= 9 {
+		recent := avg(d.RHR[:7])
+		baseline := avg(d.RHR[7:])
 		pct := pctChange(recent, baseline)
 		t := trend(pct, true)
 		if pct < -2 {
@@ -82,8 +82,8 @@ func scoreRecovery(d RawMetrics, ls LangStrings) *BriefingSection {
 	return sec
 }
 
-// computeReadiness scores 0-100 based on how recent metrics (last 5 days)
-// compare to the historical baseline (days 6+). Slices must be sorted
+// computeReadiness scores 0-100 based on how recent metrics (last 7 days)
+// compare to the historical baseline (days 8+). Slices must be sorted
 // most-recent-first (index 0 = today).
 //
 // Scoring philosophy:
@@ -94,8 +94,9 @@ func scoreRecovery(d RawMetrics, ls LangStrings) *BriefingSection {
 //
 // This means 100 is genuinely exceptional, not the default.
 //
-// The 5-day recent window smooths out single-night outliers while still
-// capturing the full 72-hour post-exercise HRV suppression window (Zulfiqar 2010).
+// The 7-day recent window aligns with the ACWR acute window (Gabbett 2016)
+// and is the consensus recommendation for HRV-guided training decisions
+// (Plews 2014, Pereira 2026).
 func computeReadiness(d RawMetrics) (score int, label, tip string, recoveryPct int) {
 	// ratioScore maps a ratio (recent/baseline) to 0-100.
 	// ratio=1.0 → 70, ratio=1.2 → 100, ratio=0.8 → 40, ratio=0.67 → ~5
@@ -104,18 +105,18 @@ func computeReadiness(d RawMetrics) (score int, label, tip string, recoveryPct i
 	}
 
 	hrvScore := 70.0
-	if len(d.HRV) >= 7 {
-		recent := avg(d.HRV[:5])
-		baseline := avg(d.HRV[5:]) // exclude recent from baseline to avoid dilution
+	if len(d.HRV) >= 9 {
+		recent := avg(d.HRV[:7])
+		baseline := avg(d.HRV[7:]) // exclude recent from baseline to avoid dilution
 		if baseline > 0 {
 			hrvScore = ratioScore(recent / baseline)
 		}
 	}
 
 	rhrScore := 70.0
-	if len(d.RHR) >= 7 {
-		recent := avg(d.RHR[:5])
-		baseline := avg(d.RHR[5:])
+	if len(d.RHR) >= 9 {
+		recent := avg(d.RHR[:7])
+		baseline := avg(d.RHR[7:])
 		if recent > 0 {
 			// RHR: lower is better → invert ratio
 			rhrScore = ratioScore(baseline / recent)
@@ -124,9 +125,9 @@ func computeReadiness(d RawMetrics) (score int, label, tip string, recoveryPct i
 
 	// Sleep: blend absolute duration with relative-to-baseline component.
 	sleepScore := 70.0
-	if len(d.Sleep) >= 7 {
-		recent := avg(d.Sleep[:5])
-		baseline := avg(d.Sleep[5:])
+	if len(d.Sleep) >= 9 {
+		recent := avg(d.Sleep[:7])
+		baseline := avg(d.Sleep[7:])
 
 		var absScore float64
 		switch {
@@ -144,6 +145,17 @@ func computeReadiness(d RawMetrics) (score int, label, tip string, recoveryPct i
 			absScore = 30
 		default:
 			absScore = 15
+		}
+
+		// Oversleep penalty: ≥9h associated with 34% higher all-cause
+		// mortality (Li et al. 2025, 79 cohort meta-analysis).
+		switch {
+		case recent >= 10.0:
+			absScore = math.Min(absScore, 40)
+		case recent >= 9.5:
+			absScore = math.Min(absScore, 60)
+		case recent >= 9.0:
+			absScore = math.Min(absScore, 80)
 		}
 
 		relScore := 70.0

@@ -23,7 +23,7 @@ func (s *DB) RunIncrementalBackfill() {
 // Bump this constant whenever the scoring logic changes —
 // rows with an older version will be ignored by the cache
 // and recomputed on the next request or backfill run.
-const ScoreVersion = 1
+const ScoreVersion = 2
 
 // readinessFromCache returns the most-recent `limit` readiness scores
 // (ascending by date) that match the current ScoreVersion.

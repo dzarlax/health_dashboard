@@ -482,7 +482,7 @@ function cycleLang() {
 }
 
 var CATEGORIES = [
-  { label:'Heart & Vitals', color:'var(--heart)',    cat:'heart',     metrics:['heart_rate','resting_heart_rate','walking_heart_rate_average','heart_rate_variability_sdnn','oxygen_saturation','respiratory_rate','blood_pressure_systolic','blood_pressure_diastolic','heart_rate_recovery','wrist_temperature','breathing_disturbances'] },
+  { label:'Heart & Vitals', color:'var(--heart)',    cat:'heart',     metrics:['heart_rate','resting_heart_rate','walking_heart_rate_average','heart_rate_variability','blood_oxygen_saturation','respiratory_rate','blood_pressure_systolic','blood_pressure_diastolic','heart_rate_recovery','wrist_temperature','breathing_disturbances'] },
   { label:'Activity',       color:'var(--activity)', cat:'activity',  metrics:['step_count','walking_running_distance','active_energy','basal_energy_burned','apple_exercise_time','apple_stand_time','apple_stand_hour','physical_effort','flights_climbed','stair_ascent_speed','stair_descent_speed','distance_cycling','distance_swimming','swimming_stroke_count','mindful_minutes'] },
   { label:'Fitness',        color:'#f59e0b',         cat:'mobility',  metrics:['vo2_max','six_min_walk_distance','walking_speed','walking_step_length','walking_double_support','walking_asymmetry','walking_steadiness'] },
   { label:'Sleep',          color:'var(--sleep)',    cat:'sleep',     metrics:['sleep_total','sleep_deep','sleep_rem','sleep_core','sleep_awake'] },
@@ -503,7 +503,7 @@ var TRENDS = [
   { metric:'step_count',             labelKey:'trend_steps',      color:'#059669', type:'bar' },
   { metric:'heart_rate',             labelKey:'trend_heart_rate', color:'#e11d48', type:'line' },
   { metric:'sleep_total',            labelKey:'trend_sleep',      color:'#7c3aed', type:'bar' },
-  { metric:'heart_rate_variability_sdnn', labelKey:'trend_hrv',        color:'#d97706', type:'line' },
+  { metric:'heart_rate_variability', labelKey:'trend_hrv',        color:'#d97706', type:'line' },
   { metric:'readiness',              labelKey:'trend_readiness',  color:'#0ea5e9', type:'line', virtual:true }
 ];
 var ICON_MAP = {

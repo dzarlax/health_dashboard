@@ -98,4 +98,9 @@ var sr = LangStrings{
 	"insight_sleep_active":  "Spavate %.1f sati na aktivne dane vs %.1f sati na dane odmora — aktivnost pomaže vašem snu.",
 	"insight_sleep_rest":    "Bolje spavate na dane odmora (%.1f h vs %.1f h). Večerna aktivnost možda utiče na san.",
 	"insight_overtrain":     "Vaša aktivnost je visoka unatoč znakovima iscrpljenosti. Rizik od pretreniranosti je povišen.",
+
+	// Alerts
+	"alert_rr_anomaly":         "Respiratorni ritam značajno odstupa od vaše norme. To može biti rani znak bolesti ili stresa.",
+	"alert_wrist_temp_anomaly": "Temperatura zgloba značajno odstupa od vaše norme. Mogući uzroci: groznica, upala ili hormonske promjene.",
+	"alert_hrv_cv_high":        "Varijabilnost HRV-a za 7 dana je povišena (CV %.0f%%), što ukazuje na nekonzistentan oporavak. Provjerite kvalitetu sna i nivo stresa.",
 }

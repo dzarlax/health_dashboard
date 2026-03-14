@@ -9,15 +9,21 @@ Data is fetched by `internal/storage/briefing.go → GetHealthBriefing()`.
 
 Every metric is fetched for the **last 30 days** relative to the most recent date that has any data in the DB (not today's date — data can be stale).
 
-- **"Recent"** = average of the last **5 days** (index 0–4, most recent first)
-- **"Baseline"** = average of days **6–30** (index 5 onward) — recent days are **excluded** from the baseline to prevent dilution
-- **% change** = `(recent − baseline) / baseline × 100`
+Two different "recent" and "baseline" definitions are used depending on context:
 
-Minimum data requirement: a metric needs at least **7 days** of data to contribute to the Readiness score (5 recent + at least 2 baseline days). Section cards require at least **3 days** (7 for HRV/RHR in Recovery, 7 for sleep regularity).
+**Readiness score & Recovery section** (require ≥ 9 days):
+- **"Recent"** = average of the last **7 days** (index 0–6, most recent first)
+- **"Baseline"** = average of days **8–30** (index 7 onward) — recent days are **excluded** from the baseline to prevent dilution
 
-> **Why 5 for "recent"?** Post-exercise HRV suppression lasts up to 72 hours [[1]](#ref-1). A 5-day window covers this window reliably while reducing the impact of single-day outliers (illness, alcohol, missed recording). ACWR-based recovery models use 7-day acute windows [[2]](#ref-2); 5 days is a balanced trade-off between responsiveness and noise robustness.
+**Sleep / Activity / Cardio sections & Metric cards** (require ≥ 3 days):
+- **"Recent"** = average of the last **3 days** (index 0–2)
+- **"Baseline"** = average of **all 30 days** (including recent) — simpler because these sections use point-based or absolute-value scoring, not ratio-based
 
-> **Why 7 total for Readiness?** With fewer than 7 days, baseline ≈ recent and the ratio is meaningless. Section cards use simpler absolute or point-based logic so 3 days is sufficient.
+**% change** = `(recent − baseline) / baseline × 100`
+
+> **Why 7 for "recent"?** The 7-day rolling average is the consensus recommendation for HRV-guided training decisions [[18]](#ref-18) [[19]](#ref-19). It aligns with the ACWR acute window [[2]](#ref-2) and fully covers the 72-hour post-exercise HRV suppression window [[1]](#ref-1) while reducing single-day noise. The coefficient of variation (CV) of the 7-day window is also a strong indicator of overreaching [[18]](#ref-18).
+
+> **Why 9 total for Readiness?** With 7 recent days and only 1 baseline day, the baseline is a single data point. Requiring at least 2 baseline days (9 total) ensures a meaningful comparison. Section cards use simpler absolute or point-based logic so 3 days is sufficient.
 
 ---
 
@@ -60,10 +66,13 @@ Applied to the ratio model.
 
 Blends two components equally (50/50):
 
-**Absolute component** — based on recent average sleep duration [[8]](#ref-8) [[9]](#ref-9):
+**Absolute component** — based on recent average sleep duration [[8]](#ref-8) [[9]](#ref-9), with oversleep penalty [[20]](#ref-20):
 
 | Recent avg sleep | Score |
 |---|---|
+| ≥ 10.0 h | 40 (oversleep penalty) |
+| ≥ 9.5 h | 60 (oversleep penalty) |
+| ≥ 9.0 h | 80 (oversleep penalty) |
 | ≥ 8.0 h | 95 |
 | ≥ 7.5 h | 85 |
 | ≥ 7.0 h | 75 |
@@ -71,6 +80,8 @@ Blends two components equally (50/50):
 | ≥ 6.0 h | 45 |
 | ≥ 5.5 h | 30 |
 | < 5.5 h | 15 |
+
+> **Why penalize oversleep?** A 2025 meta-analysis of 79 cohort studies (Li et al.) found that sleep ≥ 9 hours is associated with **34% higher all-cause mortality** (HR 1.34, 95% CI 1.26–1.42) — a stronger effect than short sleep (14% higher, HR 1.14). The U-shaped mortality curve means both extremes carry risk. The penalty is applied as a cap on the absolute score using `math.Min` so it only reduces, never raises [[20]](#ref-20).
 
 **Relative component** — `ratio = recent_sleep / baseline_sleep`, applied to the ratio model.
 
@@ -102,7 +113,10 @@ For each output day D, the score is computed using a **sliding 30-day window**: 
 ## Section cards (Recovery / Sleep / Activity / Heart & Lungs)
 
 Each section has its own point-based score that maps to **good / fair / low**.
-Baseline for section cards = average of **days 6–30** (same separation as Readiness).
+
+**Important**: Section cards use different window parameters than Readiness:
+- **Recovery**: 5-day recent, baseline = days 6+ (same as Readiness) — requires ≥ 7 days
+- **Sleep / Activity / Cardio**: 3-day recent, baseline = all 30 days — requires ≥ 3 days
 
 ### Recovery section
 
@@ -292,7 +306,7 @@ Aggregates the statuses of all available sections.
 5 cards: Steps, Sleep, HRV, Resting HR, Respiratory Rate.
 
 Each card shows:
-- **Value**: recent 5-day average
+- **Value**: recent **3-day** average
 - **Trend %**: `(recent − baseline) / baseline × 100`, rounded to 1 decimal
   where baseline = `avg(all 30 days)` for display cards (not the separated baseline used for Readiness)
 - **Trend label**: positive if > +3%, negative if < −3%, neutral otherwise
@@ -349,7 +363,7 @@ Splits the last 30 days into "active" (steps > average) and "rest" days, compare
 Requires: ≥ 7 days of both steps and sleep data, and at least 1 day in each category.
 
 ### Insight 4 — Overtraining warning
-Fires after all three insights above are evaluated, before the 3-insight cap.
+**High priority** — inserted at the front of the insight list so it always survives the 3-insight cap.
 
 - Condition: `Activity status == "good"` AND `Readiness score < 50`
 - Message: "Your activity is high despite signs of exhaustion. Risk of overtraining is elevated." (type: warning)
@@ -369,29 +383,55 @@ Shows averages over the last **3 nights**:
 
 ---
 
-## Sleep deduplication
+## Multi-device deduplication (all SUM metrics)
 
-When two wearables (e.g. Apple Watch + RingConn) both record the same night, raw `SUM` would double-count. All sleep queries use a **MAX-per-source** pattern:
+When two wearables (e.g. Apple Watch + RingConn) both record the same day, raw `SUM` would double-count. **All SUM metrics** (steps, calories, sleep, exercise time, distance, etc.) use a **MAX-per-source** pattern:
 
 ```sql
 SELECT MAX(source_sum)
 FROM (
     SELECT date, source, SUM(qty) AS source_sum
-    FROM metric_points WHERE metric_name = 'sleep_total' ...
+    FROM metric_points WHERE metric_name = ? ...
     GROUP BY date, source
 )
 GROUP BY date
 ```
 
-This picks the device that recorded the longest sleep for each night. Applied in: `GetHealthBriefing`, `GetMetricData`, `GetDashboard`, `GetSleepSummary` (MCP tool), `GetReadinessHistory`.
+This picks the device with the highest daily total for each day, avoiding double-counting. Applied consistently in: `GetHealthBriefing`, `GetMetricData`, `GetDashboard`, `GetSleepSummary`, `GetReadinessHistory`, `GetLatestMetricValues`, `BuildDailyMetrics`.
+
+SUM metrics are defined in `internal/storage/aggregates.go::SumMetrics`: step_count, active_energy, basal_energy_burned, apple_exercise_time, apple_stand_time, flights_climbed, walking_running_distance, time_in_daylight, apple_stand_hour, sleep_total, sleep_deep, sleep_rem, sleep_core, sleep_awake.
+
+---
+
+## Health Alerts (anomaly detection)
+
+Alerts are **not score components** — they flag potential health issues based on statistical deviations from personal baselines. They appear in the `alerts` field of the briefing response.
+
+### Respiratory rate anomaly [[21]](#ref-21) [[22]](#ref-22)
+
+Triggers when the 7-day average RR deviates **> 2 SD** from the baseline (days 8+). Requires ≥ 9 days of RR data.
+
+RR elevation often appears **1–2 days before** other markers during infection. Mishra et al. (2024) achieved 95% specificity for respiratory infection detection using a multi-signal algorithm (HR, RR, HRV). Used as an alert rather than a score component because false positives can be triggered by exercise, poor sleep, stress, and alcohol.
+
+### Wrist temperature anomaly [[23]](#ref-23) [[24]](#ref-24)
+
+Triggers when the 7-day average wrist temperature deviates **> 2 SD** from the baseline. Requires ≥ 9 days of data.
+
+Temperature anomalies as small as 0.4°C over 2–3 weeks can be detected with < 10% error rate (Fuller et al. 2024, n = 63,153). Useful for early fever/inflammation detection. Not all users have Apple Watch wrist temperature data — the alert gracefully degrades if data is unavailable.
+
+### HRV coefficient of variation (CV) [[18]](#ref-18) [[19]](#ref-19)
+
+Triggers when the 7-day HRV CV exceeds **15%**, suggesting autonomic instability or overreaching.
+
+The CV of the 7-day rolling average is a strong indicator of maladaptation to training load (Plews et al. 2012, 2014). High CV indicates inconsistent recovery patterns even when the average HRV looks normal. Used as a supplement to the HRV sub-score, which only evaluates the mean.
 
 ---
 
 ## Known limitations
 
-1. **Readiness requires 7 days minimum** — with fewer days, baseline is too thin to be meaningful. Score defaults to 70 (neutral) if a component has insufficient data.
+1. **Readiness requires 9 days minimum** — with fewer days, baseline is too thin to be meaningful. Score defaults to 70 (neutral) if a component has insufficient data.
 
-2. **Sleep section uses full-window baseline** — unlike Readiness, the Sleep section card compares recent to `avg(all 30 days)` rather than `avg(days 6–30)`. This is intentional: the point scale is absolute-duration-based, so baseline dilution matters less.
+2. **Section windows differ by design** — Recovery uses 7-day recent / days 8+ baseline (matches Readiness); Sleep / Activity / Cardio use 3-day recent / all-30-day baseline. The 3-day window makes these sections more responsive to acute changes, while the full-window baseline is acceptable because they use point-based or absolute-value scoring rather than ratio-based.
 
 3. **Recovery % = Readiness score** — they are literally the same number, displayed twice (score and progress bar).
 
@@ -408,6 +448,10 @@ This picks the device that recorded the longest sleep for each night. Applied in
 9. **Consumer VO₂ max accuracy** — wearable VO₂ max estimates have ±10–15% error vs. laboratory testing. Trend direction is more reliable than absolute values.
 
 10. **Sleep regularity** — requires ≥ 7 days of sleep data. With fewer days, no regularity bonus or display is shown.
+
+11. **Missing days are excluded, not zero-filled** — if a metric has no data for a given day, that day is skipped entirely in the averaging arrays. This prevents NULL days from artificially depressing scores. Both the `daily_scores` cache path and the `metric_points` fallback path use this approach consistently.
+
+12. **Respiratory rate and wrist temperature not in Readiness** — these are strong illness markers but are only used in the Cardio section card, not in the main Readiness formula. Adding them could improve early illness detection but would also add noise for healthy users.
 
 ---
 
@@ -446,3 +490,25 @@ This picks the device that recorded the longest sleep for each night. Applied in
 <a id="ref-16"></a>[16] Meeusen R et al. (2013). Prevention, Diagnosis, and Treatment of the Overtraining Syndrome. *Medicine & Science in Sports & Exercise*, 45(1), 186–205. — HRV as overtraining/overreaching biomarker; parasympathetic withdrawal pattern. [PubMed](https://pubmed.ncbi.nlm.nih.gov/23247672/)
 
 <a id="ref-17"></a>[17] Sjoding MW et al. (2020). Racial Bias in Pulse Oximetry Measurement. *NEJM*, 383(25), 2477–2478. — Consumer oximeters overestimate SpO₂ by 2–3% in darker skin tones. [NEJM](https://www.nejm.org/doi/10.1056/NEJMc2029240)
+
+<a id="ref-18"></a>[18] Plews DJ et al. (2014). Monitoring Training with Heart Rate Variability: How Much Compliance Is Needed for Valid Assessment? *Int J Sports Physiol Perform*, 9(5). — 7-day rolling average is the consensus window for HRV-guided training; CV of 7-day Ln(RMSSD) as overreaching indicator. [PubMed](https://pubmed.ncbi.nlm.nih.gov/24334285/)
+
+<a id="ref-19"></a>[19] Plews DJ et al. (2012). Heart Rate Variability in Elite Triathletes. *Eur J Appl Physiol*. — Validated 7-day rolling mean and CV as fatigue/adaptation markers in competitive athletes. [PubMed](https://pubmed.ncbi.nlm.nih.gov/22367011/)
+
+<a id="ref-20"></a>[20] Li M et al. (2025). Imbalanced Sleep Increases Mortality Risk by 14–34%: A Meta-Analysis. *GeroScience*. — 79 cohort studies: short sleep (<7h) → HR 1.14; long sleep (≥9h) → HR 1.34 (U-shaped curve). [DOI](https://doi.org/10.1007/s11357-025-01592-y)
+
+<a id="ref-21"></a>[21] Mishra T et al. (2024). Detection of Common Respiratory Infections Using Consumer Wearable Devices in Health Care Workers. *JMIR Form Res*, 8:e53716. — Multi-signal algorithm (HR, RR, HRV): 43% sensitivity, 95% specificity for respiratory infections within 7 days of symptom onset. [PMC11292157](https://pmc.ncbi.nlm.nih.gov/articles/PMC11292157/)
+
+<a id="ref-22"></a>[22] Chung YS et al. (2024). Smartwatch-Based Algorithm for Early Detection of Pulmonary Infection. *BMC Med Inform Decis Mak*. — RR as "the most important predictor of patients' prognosis" in clinical deterioration. [PMC11512465](https://pmc.ncbi.nlm.nih.gov/articles/PMC11512465/)
+
+<a id="ref-23"></a>[23] Fuller D et al. (2024). Utilizing Wearable Device Data for Syndromic Surveillance: A Fever Detection Approach. *Sensors*, 24(6):1818. — n = 63,153 participants; wearable temperature detects fever onset in acute infectious disease. [DOI](https://doi.org/10.3390/s24061818)
+
+<a id="ref-24"></a>[24] Grant CC et al. (2020). Monitoring Skin Temperature at the Wrist in Hospitalised Patients May Assist in the Detection of Infection. *Intern Med J*, 50(7). — Temperature anomalies as small as 0.4°C detectable. [PubMed](https://pubmed.ncbi.nlm.nih.gov/31908128/)
+
+<a id="ref-25"></a>[25] Pereira LA et al. (2026). Monitoring Training Adaptation and Recovery Status in Athletes Using Heart Rate Variability via Mobile Devices: A Narrative Review. *Sensors*, 26(1), 3. — RMSSD remains the recommended metric; strong agreement between ECG and consumer wearables; 7-day rolling average recommended. [DOI](https://doi.org/10.3390/s26010003)
+
+<a id="ref-26"></a>[26] Scully D et al. (2025). Investigating the Accuracy of Apple Watch VO₂ Max Measurements: A Validation Study. *PLOS ONE*, 20(5):e0323741. — Apple Watch underestimates VO₂ max by 6.07 mL/kg/min (MAPE 13.31%). [DOI](https://doi.org/10.1371/journal.pone.0323741)
+
+<a id="ref-27"></a>[27] Choe S et al. (2025). Apple Watch Accuracy in Monitoring Health Metrics: A Systematic Review and Meta-Analysis. *Physiol Meas*, 46(4). — Comprehensive accuracy assessment across metrics. [PubMed](https://pubmed.ncbi.nlm.nih.gov/40199339/)
+
+<a id="ref-28"></a>[28] Zhang D et al. (2017). Resting Heart Rate and All-Cause, Cardiovascular, and Cancer Mortality: A Systematic Review and Dose–Response Meta-Analysis. *Nutr Metab Cardiovasc Dis*, 27(6):504–517. — 87 studies: each 10 bpm RHR increase → 17% higher all-cause mortality. [PubMed](https://pubmed.ncbi.nlm.nih.gov/28552551/)

@@ -36,6 +36,7 @@ func ComputeBriefing(d RawMetrics, lang string) *BriefingResponse {
 		RecoveryPct:    readinessScore,
 		Correlation:    buildCorrelation(d),
 		Insights:       computeInsights(d, activitySec, readinessScore, ls),
+		Alerts:         computeAlerts(d, ls),
 		Sleep:          computeSleepAnalysis(d),
 		MetricCards:    metricCards,
 	}

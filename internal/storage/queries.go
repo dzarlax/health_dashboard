@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 
@@ -54,22 +55,48 @@ type LatestValue struct {
 	Date   string  `json:"date"`
 }
 
-// GetLatestMetricValues returns the latest non-zero daily average for every metric in the DB.
-// Reads from hourly_metrics (fast cache, ~100K rows) instead of metric_points (4M+ rows).
+// GetLatestMetricValues returns the latest non-zero daily value for every metric in the DB.
+// SUM metrics use MAX(per-source daily SUM) to avoid double-counting overlapping devices.
+// AVG metrics use a simple daily AVG across all sources and hours.
+// Reads from hourly_metrics (fast cache) instead of metric_points (4M+ rows).
 func (s *DB) GetLatestMetricValues() ([]LatestValue, error) {
-	rows, err := s.db.Query(`
+	sumList := make([]string, 0, len(SumMetrics))
+	for m := range SumMetrics {
+		sumList = append(sumList, "'"+m+"'")
+	}
+	sumIn := strings.Join(sumList, ",")
+
+	query := fmt.Sprintf(`
 		WITH latest_day AS (
 			SELECT metric_name, MAX(substr(hour,1,10)) AS max_date
 			FROM hourly_metrics
 			GROUP BY metric_name
+		),
+		sum_agg AS (
+			SELECT metric_name, max_date, MAX(src_sum) AS val FROM (
+				SELECT h.metric_name, l.max_date, h.source, SUM(h.avg_val) AS src_sum
+				FROM hourly_metrics h
+				JOIN latest_day l ON h.metric_name = l.metric_name
+					AND substr(h.hour,1,10) = l.max_date
+				WHERE h.metric_name IN (%s)
+				GROUP BY h.metric_name, h.source
+			) GROUP BY metric_name
+		),
+		avg_agg AS (
+			SELECT h.metric_name, l.max_date, AVG(h.avg_val) AS val
+			FROM hourly_metrics h
+			JOIN latest_day l ON h.metric_name = l.metric_name
+				AND substr(h.hour,1,10) = l.max_date
+			WHERE h.metric_name NOT IN (%s)
+			GROUP BY h.metric_name
 		)
-		SELECT h.metric_name, '', l.max_date, AVG(h.avg_val)
-		FROM hourly_metrics h
-		JOIN latest_day l ON h.metric_name = l.metric_name
-			AND substr(h.hour,1,10) = l.max_date
-		GROUP BY h.metric_name
-		ORDER BY h.metric_name
-	`)
+		SELECT metric_name, '', max_date, val FROM sum_agg
+		UNION ALL
+		SELECT metric_name, '', max_date, val FROM avg_agg
+		ORDER BY metric_name
+	`, sumIn, sumIn)
+
+	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -417,8 +444,8 @@ func (s *DB) GetDashboard() (*DashboardResponse, error) {
 		{"basal_energy_burned", "SUM"},
 		{"heart_rate", "AVG"},
 		{"resting_heart_rate", "AVG"},
-		{"heart_rate_variability_sdnn", "AVG"},
-		{"oxygen_saturation", "AVG"},
+		{"heart_rate_variability", "AVG"},
+		{"blood_oxygen_saturation", "AVG"},
 		{"respiratory_rate", "AVG"},
 		{"sleep_total", "SUM"},
 		{"apple_exercise_time", "SUM"},
@@ -428,20 +455,16 @@ func (s *DB) GetDashboard() (*DashboardResponse, error) {
 
 	queryDay := func(metric, agg, day string) float64 {
 		var val float64
-		// Sleep metrics need MAX-per-source to avoid double-counting from two devices.
-		if agg == "SUM" && strings.HasPrefix(metric, "sleep_") {
+		if agg == "SUM" {
+			// MAX(per-source SUM) avoids double-counting overlapping devices
+			// (Apple Watch + iPhone + RingConn all record the same steps/calories/sleep).
 			s.db.QueryRow(`
 				SELECT COALESCE(MAX(source_sum), 0) FROM (
-					SELECT source, SUM(sum_val) AS source_sum
+					SELECT source, SUM(avg_val) AS source_sum
 					FROM hourly_metrics
 					WHERE metric_name=? AND substr(hour,1,10)=?
 					GROUP BY source
 				)`, metric, day,
-			).Scan(&val)
-		} else if agg == "SUM" {
-			s.db.QueryRow(
-				`SELECT COALESCE(SUM(sum_val), 0) FROM hourly_metrics WHERE metric_name=? AND substr(hour,1,10)=?`,
-				metric, day,
 			).Scan(&val)
 		} else {
 			s.db.QueryRow(
@@ -452,10 +475,10 @@ func (s *DB) GetDashboard() (*DashboardResponse, error) {
 		return val
 	}
 
-	// Look up units from hourly_metrics (stored there) falling back to metric_points.
+	// Look up units from metric_points (hourly_metrics has no units column).
 	unitFor := func(metric string) string {
 		var u string
-		s.db.QueryRow(`SELECT units FROM hourly_metrics WHERE metric_name=? LIMIT 1`, metric).Scan(&u)
+		s.db.QueryRow(`SELECT units FROM metric_points WHERE metric_name=? AND units != '' LIMIT 1`, metric).Scan(&u)
 		return u
 	}
 
@@ -478,26 +501,40 @@ func (s *DB) SummarizeMetric(metric string, days int) (*MetricStats, error) {
 	if days <= 0 {
 		days = 7
 	}
-	from := fmt.Sprintf("date('now','-%d days')", days-1)
+	from := time.Now().AddDate(0, 0, -(days - 1)).Format("2006-01-02")
+	to := time.Now().Format("2006-01-02") + " 23:59:59"
 
-	var stats MetricStats
-	var units string
-	err := s.db.QueryRow(`
-		SELECT metric_name, units, COUNT(*), AVG(qty), MIN(qty), MAX(qty),
-		       MIN(date), MAX(date)
-		FROM metric_points
-		WHERE metric_name = ? AND date >= `+from+` AND qty > 0`,
-		metric,
-	).Scan(&stats.Metric, &units, &stats.Count, &stats.Avg, &stats.Min, &stats.Max, &stats.From, &stats.To)
-	if err != nil {
-		return nil, err
+	// Get daily-level data (already handles SUM/AVG and per-source dedup).
+	daily, err := s.GetMetricData(metric, from, to, "day", aggFuncFor(metric))
+	if err != nil || len(daily) == 0 {
+		return nil, fmt.Errorf("no data for %s in last %d days", metric, days)
 	}
-	stats.Units = units
 
-	daily, err := s.GetMetricData(metric, stats.From[:10], stats.To[:10]+" 23:59:59", "day", "AVG")
-	if err == nil {
-		stats.Daily = daily
+	// Compute stats from daily values (correct for both SUM and AVG metrics).
+	stats := MetricStats{
+		Metric: metric,
+		From:   daily[0].Date,
+		To:     daily[len(daily)-1].Date,
+		Count:  len(daily),
+		Min:    daily[0].Qty,
+		Max:    daily[0].Qty,
+		Daily:  daily,
 	}
+	sum := 0.0
+	for _, p := range daily {
+		sum += p.Qty
+		if p.Qty < stats.Min {
+			stats.Min = p.Qty
+		}
+		if p.Qty > stats.Max {
+			stats.Max = p.Qty
+		}
+	}
+	stats.Avg = sum / float64(len(daily))
+
+	// Look up units from metric_points.
+	s.db.QueryRow(`SELECT units FROM metric_points WHERE metric_name = ? AND units != '' LIMIT 1`, metric).Scan(&stats.Units)
+
 	return &stats, nil
 }
 

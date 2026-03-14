@@ -98,8 +98,10 @@ func computeInsights(d RawMetrics, activitySec *BriefingSection, readinessScore 
 		}
 	}
 
+	// Overtraining warning is high-priority — insert at the front so it
+	// survives the 3-insight cap even when all other insights fired.
 	if activitySec != nil && activitySec.Status == "good" && readinessScore < 50 {
-		insights = append(insights, Insight{Text: ls["insight_overtrain"], Type: "warning"})
+		insights = append([]Insight{{Text: ls["insight_overtrain"], Type: "warning"}}, insights...)
 	}
 
 	if len(insights) > 3 {

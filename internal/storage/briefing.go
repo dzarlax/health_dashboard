@@ -3,7 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"strings"
+	"sort"
 	"time"
 
 	"health-receiver/internal/health"
@@ -49,43 +49,41 @@ func (s *DB) rawMetricsFromDailyScores(lastDate string) *health.RawMetrics {
 		return nil
 	}
 
-	f := func(p *float64) float64 {
-		if p == nil {
-			return 0
-		}
-		return *p
-	}
-	appendNonZero := func(dst *[]float64, p *float64) {
+	// appendIfPositive only appends real positive values — NULL or zero days
+	// are skipped so they don't dilute averages used in scoring.
+	appendIfPositive := func(dst *[]float64, p *float64) {
 		if p != nil && *p > 0 {
 			*dst = append(*dst, *p)
-		} else {
-			*dst = append(*dst, 0)
 		}
 	}
 
 	d := &health.RawMetrics{LastDate: lastDate}
 	for _, r := range all {
-		appendNonZero(&d.HRV, r.hrv)
-		appendNonZero(&d.RHR, r.rhr)
-		appendNonZero(&d.Sleep, r.slp)
-		appendNonZero(&d.Deep, r.deep)
-		appendNonZero(&d.REM, r.rem)
-		appendNonZero(&d.Awake, r.awake)
-		appendNonZero(&d.Steps, r.steps)
-		appendNonZero(&d.Cal, r.cal)
-		appendNonZero(&d.Exercise, r.ex)
-		appendNonZero(&d.SpO2, r.spo2)
-		appendNonZero(&d.VO2, r.vo2)
-		appendNonZero(&d.Resp, r.resp)
+		appendIfPositive(&d.HRV, r.hrv)
+		appendIfPositive(&d.RHR, r.rhr)
+		appendIfPositive(&d.Sleep, r.slp)
+		appendIfPositive(&d.Deep, r.deep)
+		appendIfPositive(&d.REM, r.rem)
+		appendIfPositive(&d.Awake, r.awake)
+		appendIfPositive(&d.Steps, r.steps)
+		appendIfPositive(&d.Cal, r.cal)
+		appendIfPositive(&d.Exercise, r.ex)
+		appendIfPositive(&d.SpO2, r.spo2)
+		appendIfPositive(&d.VO2, r.vo2)
+		appendIfPositive(&d.Resp, r.resp)
 	}
 
-	// StepsWithDates and HRVWithDates — last 7 rows (already in DESC order).
+	// StepsWithDates and HRVWithDates — last 7 rows with actual data.
 	for _, r := range all {
 		if len(d.StepsWithDates) >= 7 {
 			break
 		}
-		d.StepsWithDates = append(d.StepsWithDates, health.DatedValue{Date: r.date, Val: f(r.steps)})
-		d.HRVWithDates = append(d.HRVWithDates, health.DatedValue{Date: r.date, Val: f(r.hrv)})
+		if r.steps != nil && *r.steps > 0 {
+			d.StepsWithDates = append(d.StepsWithDates, health.DatedValue{Date: r.date, Val: *r.steps})
+		}
+		if r.hrv != nil && *r.hrv > 0 {
+			d.HRVWithDates = append(d.HRVWithDates, health.DatedValue{Date: r.date, Val: *r.hrv})
+		}
 	}
 
 	return d
@@ -97,7 +95,9 @@ func (s *DB) rawMetricsFromPoints(lastDate string) *health.RawMetrics {
 	getDailyValues := func(metric string, days int, agg string) []float64 {
 		var rows *sql.Rows
 		var err error
-		if agg == "SUM" && strings.HasPrefix(metric, "sleep_") {
+		if agg == "SUM" {
+			// SUM metrics: per source SUM, then MAX across sources to avoid
+			// double-counting overlapping devices (Apple Watch + iPhone + RingConn).
 			rows, err = s.db.Query(`
 				SELECT MAX(source_sum)
 				FROM (
@@ -137,7 +137,7 @@ func (s *DB) rawMetricsFromPoints(lastDate string) *health.RawMetrics {
 	getDailyWithDates := func(metric string, days int, agg string) []health.DatedValue {
 		var rows *sql.Rows
 		var err error
-		if agg == "SUM" && strings.HasPrefix(metric, "sleep_") {
+		if agg == "SUM" {
 			rows, err = s.db.Query(`
 				SELECT d, MAX(source_sum)
 				FROM (
@@ -188,6 +188,7 @@ func (s *DB) rawMetricsFromPoints(lastDate string) *health.RawMetrics {
 		SpO2:           getDailyValues("blood_oxygen_saturation", 30, "AVG"),
 		VO2:            getDailyValues("vo2_max", 30, "AVG"),
 		Resp:           getDailyValues("respiratory_rate", 30, "AVG"),
+		WristTemp:      getDailyValues("wrist_temperature", 30, "AVG"),
 		StepsWithDates: getDailyWithDates("step_count", 7, "SUM"),
 		HRVWithDates:   getDailyWithDates("heart_rate_variability", 7, "AVG"),
 	}
@@ -210,6 +211,11 @@ func (s *DB) GetHealthBriefing(lang string) (*health.BriefingResponse, error) {
 		data = s.rawMetricsFromPoints(lastDate)
 	}
 
+	// Supplement wrist_temperature (not in daily_scores) for anomaly detection.
+	if len(data.WristTemp) == 0 {
+		data.WristTemp = s.fetchDailyMetric("wrist_temperature", lastDate, 30, "AVG")
+	}
+
 	resp := health.ComputeBriefing(*data, lang)
 
 	// Attach per-source sleep breakdown for the most recent night.
@@ -217,16 +223,16 @@ func (s *DB) GetHealthBriefing(lang string) (*health.BriefingResponse, error) {
 	if resp.Sleep != nil {
 		sleepRows, qErr := s.db.Query(`
 			SELECT source,
-				SUM(CASE WHEN metric_name='sleep_total' THEN sum_val ELSE 0 END),
-				SUM(CASE WHEN metric_name='sleep_deep'  THEN sum_val ELSE 0 END),
-				SUM(CASE WHEN metric_name='sleep_rem'   THEN sum_val ELSE 0 END),
-				SUM(CASE WHEN metric_name='sleep_core'  THEN sum_val ELSE 0 END),
-				SUM(CASE WHEN metric_name='sleep_awake' THEN sum_val ELSE 0 END)
+				SUM(CASE WHEN metric_name='sleep_total' THEN avg_val ELSE 0 END),
+				SUM(CASE WHEN metric_name='sleep_deep'  THEN avg_val ELSE 0 END),
+				SUM(CASE WHEN metric_name='sleep_rem'   THEN avg_val ELSE 0 END),
+				SUM(CASE WHEN metric_name='sleep_core'  THEN avg_val ELSE 0 END),
+				SUM(CASE WHEN metric_name='sleep_awake' THEN avg_val ELSE 0 END)
 			FROM hourly_metrics
 			WHERE metric_name IN ('sleep_total','sleep_deep','sleep_rem','sleep_core','sleep_awake')
 			  AND substr(hour,1,10) = ?
 			GROUP BY source
-			ORDER BY SUM(CASE WHEN metric_name='sleep_total' THEN sum_val ELSE 0 END) DESC`,
+			ORDER BY SUM(CASE WHEN metric_name='sleep_total' THEN avg_val ELSE 0 END) DESC`,
 			lastDate)
 		if qErr == nil {
 			defer sleepRows.Close()
@@ -334,14 +340,7 @@ func (s *DB) computeReadinessHistory(outputDays int) ([]health.ReadinessPoint, e
 	for d := range dateSet {
 		allDates = append(allDates, d)
 	}
-	// sort ascending
-	for i := 0; i < len(allDates)-1; i++ {
-		for j := i + 1; j < len(allDates); j++ {
-			if allDates[i] > allDates[j] {
-				allDates[i], allDates[j] = allDates[j], allDates[i]
-			}
-		}
-	}
+	sort.Strings(allDates)
 
 	// For each output day (last outputDays dates) compute score using 30-day window.
 	if len(allDates) > outputDays {
@@ -360,14 +359,7 @@ func (s *DB) computeReadinessHistory(outputDays int) ([]health.ReadinessPoint, e
 				pairs = append(pairs, dateval{d, v})
 			}
 		}
-		// sort by date descending
-		for i := 0; i < len(pairs)-1; i++ {
-			for j := i + 1; j < len(pairs); j++ {
-				if pairs[i].d < pairs[j].d {
-					pairs[i], pairs[j] = pairs[j], pairs[i]
-				}
-			}
-		}
+		sort.Slice(pairs, func(i, j int) bool { return pairs[i].d > pairs[j].d })
 		if len(pairs) > window {
 			pairs = pairs[:window]
 		}
@@ -387,6 +379,31 @@ func (s *DB) computeReadinessHistory(outputDays int) ([]health.ReadinessPoint, e
 		out = append(out, health.ReadinessPoint{Date: d, Score: score})
 	}
 	return out, nil
+}
+
+// fetchDailyMetric reads a single metric's daily values from metric_points.
+// Used for metrics not stored in daily_scores (e.g. wrist_temperature).
+func (s *DB) fetchDailyMetric(metric, lastDate string, days int, agg string) []float64 {
+	rows, err := s.db.Query(`
+		SELECT `+agg+`(qty)
+		FROM metric_points
+		WHERE metric_name = ? AND substr(date,1,10) >= ? AND qty > 0
+		GROUP BY substr(date,1,10)
+		ORDER BY substr(date,1,10) DESC
+		LIMIT ?`,
+		metric, subtractDays(lastDate, days), days)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var vals []float64
+	for rows.Next() {
+		var v float64
+		if rows.Scan(&v) == nil {
+			vals = append(vals, v)
+		}
+	}
+	return vals
 }
 
 func subtractDays(dateStr string, days int) string {

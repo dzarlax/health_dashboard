@@ -29,13 +29,13 @@ Single binary HTTP server (`cmd/server/main.go`) that wires together several pac
 
 - **`internal/mcpserver`** — MCP Streamable HTTP server at `/mcp` (mark3labs/mcp-go v0.44.1). Auth via `Authorization: Bearer <key>` or `X-API-Key` header (same `API_KEY` env). Tools: `get_health_briefing`, `get_readiness_history`, `list_metrics`, `get_dashboard`, `get_metric_data`, `summarize_metric`, `compare_periods`, `get_sleep_summary`, `find_anomalies`, `get_weekly_summary`, `get_personal_records`, `sql_query`.
 
-- **`internal/health`** — pure business logic for health analysis (no I/O). Readiness scoring (`scoring.go`), cardio analysis (`cardio.go`), sleep breakdowns (`sleep.go`), activity analysis (`activity.go`), insights generation (`insights.go`), and i18n (`i18n_en.go`, `i18n_ru.go`, `i18n_sr.go`). Core types in `types.go`.
+- **`internal/health`** — pure business logic for health analysis (no I/O). Readiness scoring (`scoring.go`, `readiness.go`), health anomaly alerts (`alerts.go`), cardio analysis (`cardio.go`), sleep breakdowns (`sleep.go`), activity analysis (`activity.go`), insights generation (`insights.go`), and i18n (`i18n_en.go`, `i18n_ru.go`, `i18n_sr.go`). Core types in `types.go`.
 
 - **`internal/storage`** — SQLite via `go-sqlite3` (CGO). WAL mode. Tables: `health_records`, `metric_points`, three pre-aggregated cache tables (`minute_metrics`, `hourly_metrics`, `daily_scores`), and `settings` (key-value store for Telegram config). Also includes `admin.go` (data gap detection) and `settings.go` (notification config persistence).
 
 - **`internal/notify`** — Telegram notification subsystem. Bot client (`telegram.go`) and report scheduler (`report.go`) with timezone-aware morning/evening scheduling. Config loaded from env vars with DB overrides.
 
-- **`internal/applehealth`** — streaming XML parser for Apple Health export files (`export.xml` or `.zip`). Memory-efficient, maps 100+ HK metric types to internal metric names.
+- **`internal/applehealth`** — streaming XML parser for Apple Health export files (`export.xml` or `.zip`). Memory-efficient, maps 100+ HK metric types to internal metric names. Normalizes fraction-based percentage metrics (SpO₂, body fat, etc.) to 0–100 scale during import.
 
 - **`cmd/backfill`** — standalone CLI to rebuild caches. Flags: `--force` / `-f`.
 
@@ -79,14 +79,14 @@ daily_scores       — Level 3 cache: hourly_metrics → per-day rollups (hrv_av
 
 Defined in `internal/storage/aggregates.go::SumMetrics` (exported):
 - **SUM metrics**: step_count, active_energy, basal_energy_burned, apple_exercise_time, apple_stand_time, flights_climbed, walking_running_distance, time_in_daylight, apple_stand_hour, sleep_total, sleep_deep, sleep_rem, sleep_core, sleep_awake
-- **Sleep dedup**: sleep metrics use `MAX(per-source sum)` across sources to avoid double-counting two wearables (Apple Watch + RingConn)
+- **Multi-device dedup**: all SUM metrics use `MAX(per-source sum)` across sources to avoid double-counting overlapping devices (Apple Watch + iPhone + RingConn)
 - **All others**: AVG
 
 ## Cache Invalidation & Backfill
 
 - **On startup**: `RunIncrementalBackfill()` fires after 10 s (fills missing rows only)
 - **After `POST /health`**: `InvalidateRecentAggregates(6h)` + `InvalidateRecentScores(3d)` then debounced backfill (2 min window collapses multiple syncs)
-- **ScoreVersion** constant in `scores.go`: bump to invalidate all cached readiness scores on next run
+- **ScoreVersion** constant in `scores.go` (currently 2): bump to invalidate all cached readiness scores on next run
 - **Force rebuild**: wipes cache tables, recomputes everything from `metric_points`
 
 ## SQLite Date Format
@@ -111,6 +111,11 @@ Dates arrive with timezone offset: `"2026-03-04 09:02:00 +0100"`. SQLite's `strf
 | `REPORT_EVENING_WEEKEND` | `21` | Evening report hour on weekends |
 | `REPORT_TZ` | system local | Timezone for report scheduling (e.g. `Europe/Berlin`) |
 
+## Automatic DB Migrations (run on every startup)
+
+- **Metric name normalization**: renames `heart_rate_variability_sdnn` → `heart_rate_variability`, `oxygen_saturation` → `blood_oxygen_saturation`
+- **Fraction→percent normalization**: multiplies ×100 for SpO₂, body fat, walking asymmetry/double support/steadiness values that were imported as fractions (0.0–1.0) from Apple Health XML
+
 ## One-time DB Migrations
 
 If migrating from an old schema without `UNIQUE` constraint on `metric_points`:
@@ -120,3 +125,13 @@ make migrate  # re-parse existing health_records payloads (e.g. after adding new
 ```
 
 After schema changes to `daily_scores`, run `make backfill-force` to rebuild the cache.
+
+## Readiness Scoring
+
+Detailed in `SCORING.md`. Key parameters:
+- **Readiness = HRV×40% + RHR×30% + Sleep×30%** (ratio model, 0–100 scale)
+- **Recent window**: 7 days for Readiness/Recovery; 3 days for Sleep/Activity/Cardio sections
+- **Minimum data**: 9 days (7 recent + 2 baseline)
+- **Oversleep penalty**: ≥9h sleep reduces absolute score (U-shaped mortality curve)
+- **Health alerts** (not score components): RR anomaly, wrist temp anomaly, HRV CV >15%
+- **ScoreVersion**: bump in `scores.go` to invalidate cached scores after formula changes

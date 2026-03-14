@@ -50,7 +50,7 @@ var hkTypeMap = map[string][2]string{
 
 	// Heart & cardio
 	"HeartRate":                    {"heart_rate", "count/min"},
-	"HeartRateVariabilitySDNN":     {"heart_rate_variability_sdnn", "ms"},
+	"HeartRateVariabilitySDNN":     {"heart_rate_variability", "ms"},
 	"RestingHeartRate":             {"resting_heart_rate", "count/min"},
 	"HeartRateRecoveryOneMinute":   {"heart_rate_recovery", "count/min"},
 	"WalkingHeartRateAverage":      {"walking_heart_rate_average", "count/min"},
@@ -80,8 +80,8 @@ var hkTypeMap = map[string][2]string{
 	"EnvironmentalSoundReduction":       {"environmental_sound_reduction", "dBASPL"},
 
 	// Blood oxygen (multiple identifiers → same metric)
-	"OxygenSaturation":                  {"oxygen_saturation", "%"},
-	"BloodOxygen":                       {"oxygen_saturation", "%"},
+	"OxygenSaturation":                  {"blood_oxygen_saturation", "%"},
+	"BloodOxygen":                       {"blood_oxygen_saturation", "%"},
 
 	// Gait & mobility
 	"WalkingSpeed":                      {"walking_speed", "km/hr"},
@@ -103,6 +103,18 @@ var hkTypeMap = map[string][2]string{
 	"DietaryWater":                 {"dietary_water", "mL"},
 	"DietaryCaffeine":              {"dietary_caffeine", "mg"},
 	"NumberOfAlcoholicBeverages":   {"alcoholic_beverages", "count"},
+}
+
+// hkFractionToPercent lists HK type suffixes where Apple Health stores values
+// as fractions (0.0–1.0) but the app uses percentage scale (0–100).
+// Values ≤ 1.0 are multiplied by 100 during import to match Health Auto Export format.
+var hkFractionToPercent = map[string]bool{
+	"OxygenSaturation":              true,
+	"BloodOxygen":                   true,
+	"BodyFatPercentage":             true,
+	"WalkingAsymmetryPercentage":    true,
+	"WalkingDoubleSupportPercentage": true,
+	"AppleWalkingSteadiness":        true,
 }
 
 // sleepValueMap maps HKCategoryValueSleepAnalysis* → metric name.
@@ -307,6 +319,12 @@ func parseRecord(a map[string]string) []storage.MetricPoint {
 	if ok {
 		if units == "" {
 			units = info[1]
+		}
+		// Apple Health stores percentage metrics as fractions (0.0–1.0)
+		// while Health Auto Export sends them as percentages (0–100).
+		// Normalize to percentage scale so both sources are consistent.
+		if hkFractionToPercent[suffix] && value > 0 && value <= 1.0 {
+			value *= 100
 		}
 		return []storage.MetricPoint{
 			{MetricName: info[0], Units: units, Date: startDate, Qty: value, Source: source},
