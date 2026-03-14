@@ -11,12 +11,12 @@ jobs:
     name: Build & Vet
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
 
       - name: Install gcc (required for CGO/sqlite3)
         run: sudo apt-get install -y gcc
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up QEMU (for multi-arch builds)
         uses: docker/setup-qemu-action@v3

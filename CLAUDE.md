@@ -14,23 +14,32 @@ make backfill-force   # wipe and fully rebuild all caches from metric_points
 make docker-up        # docker compose up -d --build
 make docker-down      # docker compose down
 make test             # send a test POST to localhost:8080/health
+make import FILE=export.zip  # import Apple Health export (ZIP or XML)
 ```
 
 Build requires CGO (for go-sqlite3). Always use `CGO_ENABLED=1`.
 
 ## Architecture
 
-Single binary HTTP server (`cmd/server/main.go`) that wires together three packages:
+Single binary HTTP server (`cmd/server/main.go`) that wires together several packages:
 
 - **`internal/handler`** — receives health data from the Health Auto Export iOS app via `POST /health`. Parses JSON payload into `[]storage.MetricPoint` and writes to DB. Auth via `X-API-Key` header (env `API_KEY`). After a successful insert, calls `onNewData()` to trigger cache invalidation + debounced backfill.
 
-- **`internal/ui`** — web dashboard SPA at `/`. Password-protected via cookie (env `UI_PASSWORD`). Login page at `/login`. API endpoints: `/api/dashboard`, `/api/metrics`, `/api/metrics/data`, `/api/health-briefing`, `/api/readiness-history`, `/api/admin/status`, `/api/admin/backfill`. The entire frontend is embedded Go strings in `internal/ui/` (template, scripts, styles). Uses Chart.js 4 from CDN.
+- **`internal/ui`** — web dashboard SPA at `/`. Password-protected via cookie (env `UI_PASSWORD`). Login page at `/login`. API endpoints: `/api/dashboard`, `/api/metrics`, `/api/metrics/data`, `/api/metrics/latest`, `/api/metrics/range`, `/api/health-briefing`, `/api/readiness-history`, `/api/admin/status`, `/api/admin/backfill`, `/api/admin/settings`, `/api/admin/test-notify`, `/api/admin/gaps`, `/api/admin/import/upload`, `/api/admin/import/status`. The entire frontend is embedded Go strings in `internal/ui/` (template, scripts, styles). Uses Chart.js 4 from CDN.
 
 - **`internal/mcpserver`** — MCP Streamable HTTP server at `/mcp` (mark3labs/mcp-go v0.44.1). Auth via `Authorization: Bearer <key>` or `X-API-Key` header (same `API_KEY` env). Tools: `get_health_briefing`, `get_readiness_history`, `list_metrics`, `get_dashboard`, `get_metric_data`, `summarize_metric`, `compare_periods`, `get_sleep_summary`, `find_anomalies`, `get_weekly_summary`, `get_personal_records`, `sql_query`.
 
-- **`internal/storage`** — SQLite via `go-sqlite3` (CGO). WAL mode. Four tables: `health_records`, `metric_points`, and three pre-aggregated cache tables (`minute_metrics`, `hourly_metrics`, `daily_scores`).
+- **`internal/health`** — pure business logic for health analysis (no I/O). Readiness scoring (`scoring.go`), cardio analysis (`cardio.go`), sleep breakdowns (`sleep.go`), activity analysis (`activity.go`), insights generation (`insights.go`), and i18n (`i18n_en.go`, `i18n_ru.go`, `i18n_sr.go`). Core types in `types.go`.
+
+- **`internal/storage`** — SQLite via `go-sqlite3` (CGO). WAL mode. Tables: `health_records`, `metric_points`, three pre-aggregated cache tables (`minute_metrics`, `hourly_metrics`, `daily_scores`), and `settings` (key-value store for Telegram config). Also includes `admin.go` (data gap detection) and `settings.go` (notification config persistence).
+
+- **`internal/notify`** — Telegram notification subsystem. Bot client (`telegram.go`) and report scheduler (`report.go`) with timezone-aware morning/evening scheduling. Config loaded from env vars with DB overrides.
+
+- **`internal/applehealth`** — streaming XML parser for Apple Health export files (`export.xml` or `.zip`). Memory-efficient, maps 100+ HK metric types to internal metric names.
 
 - **`cmd/backfill`** — standalone CLI to rebuild caches. Flags: `--force` / `-f`.
+
+- **`cmd/import`** — standalone CLI to import Apple Health export files. Flags: `--db`, `--file`, `--batch`, `--pause`, `--dry-run`. Streams XML to avoid memory overload.
 
 ## Data Flow
 
@@ -100,6 +109,7 @@ Dates arrive with timezone offset: `"2026-03-04 09:02:00 +0100"`. SQLite's `strf
 | `REPORT_MORNING_WEEKEND` | `9` | Morning report hour on weekends |
 | `REPORT_EVENING_WEEKDAY` | `20` | Evening report hour on weekdays |
 | `REPORT_EVENING_WEEKEND` | `21` | Evening report hour on weekends |
+| `REPORT_TZ` | system local | Timezone for report scheduling (e.g. `Europe/Berlin`) |
 
 ## One-time DB Migrations
 

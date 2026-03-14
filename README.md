@@ -88,6 +88,7 @@ All configuration is via environment variables in `docker-compose.yml`:
 | `REPORT_MORNING_WEEKEND` | No | Hour (0–23) for morning sleep report on weekends. Default: `9`. |
 | `REPORT_EVENING_WEEKDAY` | No | Hour (0–23) for evening day summary on weekdays. Default: `20`. |
 | `REPORT_EVENING_WEEKEND` | No | Hour (0–23) for evening day summary on weekends. Default: `21`. |
+| `REPORT_TZ` | No | Timezone for report scheduling (e.g. `Europe/Berlin`). Default: system local. |
 
 ## Health Auto Export Setup
 
@@ -113,7 +114,7 @@ Features:
 - **Health Briefing** — AI-style daily summary with readiness score, sleep analysis, and insights
 - **Metrics view** — full list of available metrics with latest values; click any to open its chart
 - **Metric charts** — time series with auto-bucketing (minute / hour / day)
-- **Settings** — cache status and backfill controls (gear icon, top-right)
+- **Settings** — cache status, backfill controls, Telegram notification config, data gap detection, and Apple Health import (gear icon, top-right)
 - URL hash state — shareable links like `/#metric=heart_rate&from=2026-01-01&to=2026-01-31`
 
 ## MCP Server
@@ -161,7 +162,17 @@ When `TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID` are set, the server sends two daily
 - **Morning** (weekday 08:00 / weekend 09:00) — sleep duration, phases (deep/REM/core/awake), readiness score, HRV and RHR
 - **Evening** (weekday 20:00 / weekend 21:00) — steps, calories, exercise minutes, cardio summary, top insights
 
-Times are configurable per weekday/weekend via env vars. To get your `TELEGRAM_CHAT_ID`, send any message to your bot and call `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+Times are configurable per weekday/weekend via env vars or through the Settings panel in the web UI (DB settings take priority over env vars). Timezone is controlled by `REPORT_TZ`. To get your `TELEGRAM_CHAT_ID`, send any message to your bot and call `https://api.telegram.org/bot<TOKEN>/getUpdates`. You can send test reports from the Settings panel.
+
+## Apple Health Import
+
+You can import a full Apple Health export (the `export.xml` or `.zip` from iPhone Settings → Health → Export All Health Data):
+
+```bash
+make import FILE=path/to/export.zip
+```
+
+The import streams the XML to avoid memory issues with large files. It can also be done via the web UI: Settings → Import.
 
 ## Maintenance
 
@@ -172,6 +183,7 @@ make migrate          # re-parse health_records → metric_points (run after add
 make dedup            # rebuild metric_points with UNIQUE constraint (run once on old databases)
 make backfill         # rebuild pre-aggregated caches from metric_points (incremental)
 make backfill-force   # wipe and fully rebuild all caches
+make import FILE=...  # import Apple Health export (ZIP or XML)
 make docker-up        # build and start with Docker Compose
 make docker-down      # stop all services
 ```
