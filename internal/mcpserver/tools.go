@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -14,7 +15,7 @@ import (
 
 func registerMetricTools(s *server.MCPServer, db *storage.DB) {
 	s.AddTool(mcp.NewTool("get_health_briefing",
-		mcp.WithDescription("Get a full daily health briefing: readiness score, sleep analysis, HRV/RHR recovery, activity, and AI-generated insights. Best starting point for a comprehensive health summary."),
+		mcp.WithDescription("Get a full daily health briefing: readiness score (7-day HRV/RHR/sleep vs personal baseline, with oversleep penalty), sleep analysis, recovery, activity, cardio sections, AI-generated insights, and health alerts (respiratory rate, wrist temperature, HRV variability anomalies). Best starting point."),
 		mcp.WithString("lang", mcp.Description("Response language: en, ru, sr (default: en)")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		lang := req.GetString("lang", "en")
@@ -26,7 +27,7 @@ func registerMetricTools(s *server.MCPServer, db *storage.DB) {
 	})
 
 	s.AddTool(mcp.NewTool("get_readiness_history",
-		mcp.WithDescription("Get daily readiness scores (0–100) for the last N days. Score combines HRV trend, resting heart rate, and sleep duration relative to personal baseline."),
+		mcp.WithDescription("Get daily readiness scores (0–100) for the last N days. Score = HRV×40% + RHR×30% + Sleep×30%, comparing 7-day recent avg vs personal baseline (days 8+). Includes oversleep penalty (≥9h)."),
 		mcp.WithNumber("days", mcp.Description("Number of recent days (default: 30)")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		days := req.GetInt("days", 30)
@@ -125,7 +126,7 @@ Schema:
 Key metrics: heart_rate, resting_heart_rate, heart_rate_variability, blood_oxygen_saturation,
   step_count, active_energy, basal_energy_burned, walking_running_distance, apple_exercise_time,
   sleep_total, sleep_deep, sleep_rem, sleep_core, sleep_awake,
-  respiratory_rate, apple_sleeping_wrist_temperature, vo2_max
+  respiratory_rate, wrist_temperature, vo2_max
 
 Notes:
   - Prefer daily_scores for day-level queries — one row per day, much faster than metric_points
@@ -178,28 +179,33 @@ func registerAnalysisTools(s *server.MCPServer, db *storage.DB) {
 			DataPoints int     `json:"data_points"`
 		}
 
+		// Use GetMetricData (day bucket) which handles multi-device dedup
+		// correctly for SUM metrics, then aggregate daily values.
 		queryPeriod := func(from, to string) (periodStats, error) {
-			rows, err := db.QueryReadOnly(fmt.Sprintf(
-				`SELECT %s(qty), MIN(qty), MAX(qty), COUNT(*) FROM metric_points
-				 WHERE metric_name = '%s' AND substr(date,1,10) >= '%s' AND substr(date,1,10) <= '%s' AND qty > 0`,
-				agg, metric, from, to,
-			))
-			if err != nil || len(rows) == 0 {
+			points, err := db.GetMetricData(metric, from, to+" 23:59:59", "day", agg)
+			if err != nil {
 				return periodStats{From: from, To: to}, err
 			}
-			r := rows[0]
-			ps := periodStats{From: from, To: to}
-			if v, ok := r[agg+"(qty)"].(float64); ok {
-				ps.Value = v
+			ps := periodStats{From: from, To: to, DataPoints: len(points)}
+			if len(points) == 0 {
+				return ps, nil
 			}
-			if v, ok := r["MIN(qty)"].(float64); ok {
-				ps.Min = v
+			sum := 0.0
+			ps.Min = points[0].Qty
+			ps.Max = points[0].Qty
+			for _, p := range points {
+				sum += p.Qty
+				if p.Qty < ps.Min {
+					ps.Min = p.Qty
+				}
+				if p.Qty > ps.Max {
+					ps.Max = p.Qty
+				}
 			}
-			if v, ok := r["MAX(qty)"].(float64); ok {
-				ps.Max = v
-			}
-			if v, ok := r["COUNT(*)"].(int64); ok {
-				ps.DataPoints = int(v)
+			if sumMetrics[metric] {
+				ps.Value = sum // total over period
+			} else {
+				ps.Value = sum / float64(len(points)) // average over period
 			}
 			return ps, nil
 		}
@@ -323,49 +329,109 @@ func registerAnalysisTools(s *server.MCPServer, db *storage.DB) {
 			if sumMetrics[metric] {
 				agg = "SUM"
 			}
-			rows, err := db.QueryReadOnly(fmt.Sprintf(
-				`SELECT strftime('%%Y-W%%W', substr(date,1,10)) as week,
-				        %s(qty) as value, COUNT(*) as data_points
-				 FROM metric_points
-				 WHERE metric_name = '%s' AND substr(date,1,10) >= '%s' AND substr(date,1,10) <= '%s' AND qty > 0
-				 GROUP BY week ORDER BY week`,
-				agg, metric, from, to,
-			))
+			// Use GetMetricData which handles multi-device dedup,
+			// then aggregate daily values into weeks in Go.
+			points, err := db.GetMetricData(metric, from, to+" 23:59:59", "day", agg)
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("%s: %v", metric, err)), nil
 			}
-			result[metric] = map[string]any{"agg": agg, "weeks": rows}
+			type weekData struct {
+				Week       string  `json:"week"`
+				Value      float64 `json:"value"`
+				DataPoints int     `json:"data_points"`
+			}
+			weekMap := map[string]*weekData{}
+			var weekOrder []string
+			for _, p := range points {
+				if len(p.Date) < 10 {
+					continue
+				}
+				// Compute ISO week from date string.
+				t, perr := time.Parse("2006-01-02", p.Date[:10])
+				if perr != nil {
+					continue
+				}
+				y, w := t.ISOWeek()
+				wk := fmt.Sprintf("%d-W%02d", y, w)
+				wd, ok := weekMap[wk]
+				if !ok {
+					wd = &weekData{Week: wk}
+					weekMap[wk] = wd
+					weekOrder = append(weekOrder, wk)
+				}
+				wd.Value += p.Qty
+				wd.DataPoints++
+			}
+			// For AVG metrics, convert accumulated sum to average.
+			if !sumMetrics[metric] {
+				for _, wd := range weekMap {
+					if wd.DataPoints > 0 {
+						wd.Value /= float64(wd.DataPoints)
+					}
+				}
+			}
+			var weeks []weekData
+			for _, wk := range weekOrder {
+				w := weekMap[wk]
+				w.Value = math.Round(w.Value*100) / 100
+				weeks = append(weeks, *w)
+			}
+			result[metric] = map[string]any{"agg": agg, "weeks": weeks}
 		}
 		return jsonResult(map[string]any{"from": from, "to": to, "data": result})
 	})
 
 	s.AddTool(mcp.NewTool("get_personal_records",
-		mcp.WithDescription("Best (max) and worst (min) values ever recorded for each metric, with the date they occurred."),
+		mcp.WithDescription("Best (max) and worst (min) daily values ever recorded for each metric, with the date they occurred. SUM metrics show best/worst daily totals (with multi-device dedup); AVG metrics show best/worst daily averages."),
 		mcp.WithString("metric", mcp.Description("Filter to a single metric. If omitted, returns records for all metrics.")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		metric := req.GetString("metric", "")
-		whereMetric := ""
-		if metric != "" {
-			whereMetric = fmt.Sprintf("AND m.metric_name = '%s'", metric)
-		}
-		rows, err := db.QueryReadOnly(fmt.Sprintf(
-			`SELECT m.metric_name, m.units,
-			        mx.max_qty as best_value,  substr(mxd.date,1,10) as best_date,
-			        mn.min_qty as worst_value, substr(mnd.date,1,10) as worst_date
-			 FROM (SELECT DISTINCT metric_name FROM metric_points WHERE qty > 0) m
-			 JOIN (SELECT metric_name, MAX(qty) as max_qty FROM metric_points WHERE qty > 0 GROUP BY metric_name) mx
-			   ON m.metric_name = mx.metric_name
-			 JOIN (SELECT metric_name, MIN(qty) as min_qty FROM metric_points WHERE qty > 0 GROUP BY metric_name) mn
-			   ON m.metric_name = mn.metric_name
-			 JOIN metric_points mxd ON mxd.metric_name = m.metric_name AND mxd.qty = mx.max_qty
-			 JOIN metric_points mnd ON mnd.metric_name = m.metric_name AND mnd.qty = mn.min_qty
-			 WHERE 1=1 %s
-			 GROUP BY m.metric_name
-			 ORDER BY m.metric_name`, whereMetric,
-		))
+
+		// Get list of metrics to process.
+		metrics, err := db.ListMetrics()
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return jsonResult(rows)
+
+		type record struct {
+			Metric     string  `json:"metric"`
+			BestValue  float64 `json:"best_value"`
+			BestDate   string  `json:"best_date"`
+			WorstValue float64 `json:"worst_value"`
+			WorstDate  string  `json:"worst_date"`
+		}
+		var records []record
+
+		for _, m := range metrics {
+			if metric != "" && m.Name != metric {
+				continue
+			}
+			// Use GetMetricData with day bucket — handles dedup correctly.
+			minDate, maxDate, rerr := db.GetMetricDateRange(m.Name)
+			if rerr != nil || minDate == "" {
+				continue
+			}
+			agg := "AVG"
+			if sumMetrics[m.Name] {
+				agg = "SUM"
+			}
+			points, derr := db.GetMetricData(m.Name, minDate, maxDate+" 23:59:59", "day", agg)
+			if derr != nil || len(points) == 0 {
+				continue
+			}
+			rec := record{Metric: m.Name, BestValue: points[0].Qty, WorstValue: points[0].Qty, BestDate: points[0].Date, WorstDate: points[0].Date}
+			for _, p := range points[1:] {
+				if p.Qty > rec.BestValue {
+					rec.BestValue = p.Qty
+					rec.BestDate = p.Date
+				}
+				if p.Qty < rec.WorstValue {
+					rec.WorstValue = p.Qty
+					rec.WorstDate = p.Date
+				}
+			}
+			records = append(records, rec)
+		}
+		return jsonResult(records)
 	})
 }
