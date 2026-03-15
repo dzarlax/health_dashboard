@@ -276,9 +276,13 @@ func (s *DB) Insert(r Record, points []MetricPoint) (int64, error) {
 		return 0, err
 	}
 
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO metric_points
+	stmt, err := tx.Prepare(`INSERT INTO metric_points
 		(health_record_id, metric_name, units, date, qty, source)
-		VALUES (?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(metric_name, date, source) DO UPDATE SET
+			qty = excluded.qty,
+			units = excluded.units,
+			health_record_id = excluded.health_record_id`)
 	if err != nil {
 		return 0, err
 	}
