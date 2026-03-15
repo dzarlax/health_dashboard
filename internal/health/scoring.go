@@ -71,21 +71,18 @@ func overallStatus(sections []BriefingSection) string {
 
 func buildHighlights(d RawMetrics, ls LangStrings) []BriefingDetail {
 	var out []BriefingDetail
+	// Show today's values (index 0), not multi-day averages.
 	if len(d.Steps) > 0 {
-		recent := avg(d.Steps[:min(3, len(d.Steps))])
-		out = append(out, BriefingDetail{Label: ls["lbl_steps"], Value: formatNumber(int(recent))})
+		out = append(out, BriefingDetail{Label: ls["lbl_steps"], Value: formatNumber(int(d.Steps[0]))})
 	}
 	if len(d.Sleep) > 0 {
-		recent := avg(d.Sleep[:min(3, len(d.Sleep))])
-		out = append(out, BriefingDetail{Label: ls["sec_sleep"], Value: fmtFloat(recent, 1) + "h"})
+		out = append(out, BriefingDetail{Label: ls["sec_sleep"], Value: fmtFloat(d.Sleep[0], 1) + "h"})
 	}
 	if len(d.RHR) > 0 {
-		recent := avg(d.RHR[:min(3, len(d.RHR))])
-		out = append(out, BriefingDetail{Label: ls["lbl_resting_hr"], Value: fmtFloat(recent, 0) + " bpm"})
+		out = append(out, BriefingDetail{Label: ls["lbl_resting_hr"], Value: fmtFloat(d.RHR[0], 0) + " bpm"})
 	}
 	if len(d.Cal) > 0 {
-		recent := avg(d.Cal[:min(3, len(d.Cal))])
-		out = append(out, BriefingDetail{Label: ls["lbl_active_cal"], Value: formatNumber(int(recent)) + " kcal"})
+		out = append(out, BriefingDetail{Label: ls["lbl_active_cal"], Value: formatNumber(int(d.Cal[0])) + " kcal"})
 	}
 	return out
 }
@@ -105,16 +102,17 @@ func buildMetricCards(d RawMetrics) []MetricCard {
 		{"Resting HR", "bpm", d.RHR, 0},
 		{"Respiratory Rate", "br/min", d.Resp, 1},
 	} {
-		if len(sp.vals) < 3 {
+		if len(sp.vals) == 0 {
 			continue
 		}
-		recent := avg(sp.vals[:min(3, len(sp.vals))])
+		// Show today's value (index 0), trend vs 30-day baseline.
+		today := sp.vals[0]
 		baseline := avg(sp.vals)
-		pct := pctChange(recent, baseline)
+		pct := pctChange(today, baseline)
 		tLabel := trend(pct, false)
 		out = append(out, MetricCard{
 			Name:       sp.name,
-			Value:      fmtFloat(recent, sp.decimal),
+			Value:      fmtFloat(today, sp.decimal),
 			Unit:       sp.unit,
 			TrendPct:   roundTo1(pct),
 			TrendLabel: tLabel,

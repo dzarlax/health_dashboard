@@ -9,9 +9,9 @@ func scoreActivity(d RawMetrics, ls LangStrings) *BriefingSection {
 	sec := &BriefingSection{Key: "activity", Title: ls["sec_activity"], Icon: "activity"}
 	score, maxScore := 0, 0
 
-	var stepsRecent float64
+	var stepsToday float64
 	if len(d.Steps) >= 3 {
-		stepsRecent = avg(d.Steps[:min(3, len(d.Steps))])
+		stepsRecent := avg(d.Steps[:min(3, len(d.Steps))])
 		stepsBase := avg(d.Steps)
 		pct := pctChange(stepsRecent, stepsBase)
 		maxScore += 2
@@ -20,6 +20,8 @@ func scoreActivity(d RawMetrics, ls LangStrings) *BriefingSection {
 		} else if pct > -30 {
 			score += 1
 		}
+		// Display today's value, score uses 3-day avg.
+		stepsToday = d.Steps[0]
 		note := ls["steps_note_normal"]
 		if pct > 10 {
 			note = ls["steps_note_good"]
@@ -27,7 +29,7 @@ func scoreActivity(d RawMetrics, ls LangStrings) *BriefingSection {
 			note = ls["steps_note_low"]
 		}
 		sec.Details = append(sec.Details, BriefingDetail{
-			Label: ls["lbl_steps"], Value: fmt.Sprintf(ls["unit_steps_day"], fmtFloat(stepsRecent, 0)),
+			Label: ls["lbl_steps"], Value: fmt.Sprintf(ls["unit_steps_day"], fmtFloat(stepsToday, 0)),
 			Note: note, Trend: trend(pct, false),
 		})
 	}
@@ -48,8 +50,9 @@ func scoreActivity(d RawMetrics, ls LangStrings) *BriefingSection {
 		} else if pct < -15 {
 			calNote = ls["cal_note_low"]
 		}
+		// Display today's value.
 		sec.Details = append(sec.Details, BriefingDetail{
-			Label: ls["lbl_active_cal"], Value: fmtFloat(calRecent, 0) + " kcal",
+			Label: ls["lbl_active_cal"], Value: fmtFloat(d.Cal[0], 0) + " kcal",
 			Note: calNote, Trend: trend(pct, false),
 		})
 	}
@@ -72,17 +75,18 @@ func scoreActivity(d RawMetrics, ls LangStrings) *BriefingSection {
 		} else if exRecent >= 15 {
 			exTrend = "stable"
 		}
+		// Display today's value.
 		sec.Details = append(sec.Details, BriefingDetail{
-			Label: ls["lbl_exercise"], Value: fmt.Sprintf(ls["unit_min_day"], fmtFloat(exRecent, 0)),
+			Label: ls["lbl_exercise"], Value: fmt.Sprintf(ls["unit_min_day"], fmtFloat(d.Exercise[0], 0)),
 			Note: exNote, Trend: exTrend,
 		})
 	}
 
 	if maxScore > 0 {
 		ratio := float64(score) / float64(maxScore)
-		stepsLabel := fmt.Sprintf("%.0f", stepsRecent)
-		if stepsRecent >= 1000 {
-			stepsLabel = formatNumber(int(stepsRecent))
+		stepsLabel := fmt.Sprintf("%.0f", stepsToday)
+		if stepsToday >= 1000 {
+			stepsLabel = formatNumber(int(stepsToday))
 		}
 		if ratio >= 0.7 {
 			sec.Status = "good"

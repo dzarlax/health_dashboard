@@ -306,9 +306,9 @@ Aggregates the statuses of all available sections.
 5 cards: Steps, Sleep, HRV, Resting HR, Respiratory Rate.
 
 Each card shows:
-- **Value**: recent **3-day** average
-- **Trend %**: `(recent − baseline) / baseline × 100`, rounded to 1 decimal
-  where baseline = `avg(all 30 days)` for display cards (not the separated baseline used for Readiness)
+- **Value**: **today's** value (`vals[0]`, most recent day)
+- **Trend %**: `(today − baseline) / baseline × 100`, rounded to 1 decimal
+  where baseline = `avg(all 30 days)`
 - **Trend label**: positive if > +3%, negative if < −3%, neutral otherwise
 
 ---
