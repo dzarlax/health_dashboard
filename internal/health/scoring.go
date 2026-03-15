@@ -12,6 +12,8 @@ func ComputeBriefing(d RawMetrics, lang string) *BriefingResponse {
 	cardioSec := scoreCardio(d, ls)
 
 	readinessScore, label, tip := computeReadinessScore(d, ls)
+	todayScore := computeReadinessToday(d)
+	todayLabel, _ := readinessLabelTip(todayScore, ls)
 
 	var sections []BriefingSection
 	for _, sec := range []*BriefingSection{recoverySec, sleepSec, activitySec, cardioSec} {
@@ -30,10 +32,12 @@ func ComputeBriefing(d RawMetrics, lang string) *BriefingResponse {
 		Overall:        overall,
 		Sections:       sections,
 		Highlights:     highlights,
-		ReadinessScore: readinessScore,
-		ReadinessLabel: label,
-		ReadinessTip:   tip,
-		RecoveryPct:    readinessScore,
+		ReadinessScore:      readinessScore,
+		ReadinessLabel:      label,
+		ReadinessTip:        tip,
+		RecoveryPct:         readinessScore,
+		ReadinessToday:      todayScore,
+		ReadinessTodayLabel: todayLabel,
 		Correlation:    buildCorrelation(d),
 		Insights:       computeInsights(d, activitySec, readinessScore, ls),
 		Alerts:         computeAlerts(d, ls),

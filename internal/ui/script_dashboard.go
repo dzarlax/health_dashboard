@@ -10,12 +10,14 @@ function renderBriefing(data) {
     return;
   }
 
-  // Readiness card
-  $('readiness-score').textContent = data.readiness_score || '--';
-  $('readiness-status').textContent = data.readiness_label || '';
+  // Readiness card: big number = today, bar = 7-day trend
+  var todayScore = data.readiness_today || data.readiness_score || 0;
+  var trendScore = data.readiness_score || 0;
+  $('readiness-score').textContent = todayScore || '--';
+  $('readiness-status').textContent = data.readiness_today_label || data.readiness_label || '';
   $('readiness-tip').textContent = data.readiness_tip || '';
-  $('recovery-pct-label').textContent = (data.recovery_pct || 0) + '%';
-  $('recovery-bar-fill').style.width = (data.recovery_pct || 0) + '%';
+  $('recovery-pct-label').textContent = trendScore + '%';
+  $('recovery-bar-fill').style.width = trendScore + '%';
 
   // Date in hero
   if (data.date) {

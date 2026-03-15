@@ -100,10 +100,12 @@ type BriefingResponse struct {
 	Overall        string             `json:"overall"` // "good", "fair", "low"
 	Sections       []BriefingSection  `json:"sections"`
 	Highlights     []BriefingDetail   `json:"highlights"`
-	ReadinessScore int                `json:"readiness_score"`
+	ReadinessScore int                `json:"readiness_score"`      // 7-day sliding window
 	ReadinessLabel string             `json:"readiness_label"`
 	ReadinessTip   string             `json:"readiness_tip"`
 	RecoveryPct    int                `json:"recovery_pct"`
+	ReadinessToday int                `json:"readiness_today"`      // today only vs baseline
+	ReadinessTodayLabel string        `json:"readiness_today_label"`
 	Correlation    []CorrelationPoint `json:"correlation"`
 	Insights       []Insight          `json:"insights"`
 	Alerts         []Alert            `json:"alerts,omitempty"`

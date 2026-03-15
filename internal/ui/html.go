@@ -29,7 +29,7 @@ const htmlBody = `
         <div id="hero-bg-glow-1"></div>
         <div id="hero-bg-glow-2"></div>
         <div id="hero-score-block">
-          <div id="readiness-label-top" data-i18n="readiness">Readiness</div>
+          <div id="readiness-label-top" data-i18n="readiness_today_label">Today</div>
           <div id="readiness-score">--</div>
           <div id="readiness-status"></div>
         </div>
@@ -37,7 +37,7 @@ const htmlBody = `
           <div id="readiness-tip"></div>
           <div id="readiness-recovery">
             <div id="recovery-bar-labels">
-              <span data-i18n="recovery">Recovery</span>
+              <span data-i18n="readiness_trend_label">7-day trend</span>
               <span id="recovery-pct-label"></span>
             </div>
             <div id="recovery-bar-track">

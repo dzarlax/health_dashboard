@@ -175,6 +175,80 @@ func computeReadiness(d RawMetrics) (score int, label, tip string, recoveryPct i
 	return s, "", "", 0 // label/tip filled by caller with i18n
 }
 
+// computeReadinessToday scores 0-100 using today's values (index 0) vs the
+// historical baseline (days 7+). Same formula as computeReadiness but reacts
+// immediately to a single bad night instead of smoothing over 7 days.
+func computeReadinessToday(d RawMetrics) int {
+	ratioScore := func(ratio float64) float64 {
+		return math.Min(100, math.Max(0, 70+(ratio-1)*150))
+	}
+
+	hrvScore := 70.0
+	if len(d.HRV) >= 9 {
+		today := d.HRV[0]
+		baseline := avg(d.HRV[7:])
+		if baseline > 0 && today > 0 {
+			hrvScore = ratioScore(today / baseline)
+		}
+	}
+
+	rhrScore := 70.0
+	if len(d.RHR) >= 9 {
+		today := d.RHR[0]
+		baseline := avg(d.RHR[7:])
+		if today > 0 {
+			rhrScore = ratioScore(baseline / today)
+		}
+	}
+
+	sleepScore := 70.0
+	if len(d.Sleep) >= 9 {
+		today := d.Sleep[0]
+		baseline := avg(d.Sleep[7:])
+
+		var absScore float64
+		switch {
+		case today >= 8.0:
+			absScore = 95
+		case today >= 7.5:
+			absScore = 85
+		case today >= 7.0:
+			absScore = 75
+		case today >= 6.5:
+			absScore = 60
+		case today >= 6.0:
+			absScore = 45
+		case today >= 5.5:
+			absScore = 30
+		default:
+			absScore = 15
+		}
+		switch {
+		case today >= 10.0:
+			absScore = math.Min(absScore, 40)
+		case today >= 9.5:
+			absScore = math.Min(absScore, 60)
+		case today >= 9.0:
+			absScore = math.Min(absScore, 80)
+		}
+
+		relScore := 70.0
+		if baseline > 0 {
+			relScore = ratioScore(today / baseline)
+		}
+		sleepScore = absScore*0.5 + relScore*0.5
+	}
+
+	s := int(math.Round(hrvScore*0.4 + rhrScore*0.3 + sleepScore*0.3))
+	if s > 100 {
+		s = 100
+	}
+	if s < 0 {
+		s = 0
+	}
+	return s
+}
+
 // ComputeReadinessScore computes a 0–100 readiness score from pre-sorted
 // (most-recent-first) slices. At least 3 data points in each slice are needed
 // for a meaningful result; if a slice is empty, that component is treated as 100.

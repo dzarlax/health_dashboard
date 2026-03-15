@@ -6,7 +6,7 @@ var LANG = localStorage.getItem('lang') || 'en';
 var I18N = {
   en: {
     app_title:'Health', explore:'Explore', loading:'Loading your health data',
-    readiness:'Readiness', recovery:'Recovery', back:'Back', compare:'Compare',
+    readiness:'Readiness', recovery:'Recovery', readiness_today_label:'Today', readiness_trend_label:'7-day trend', back:'Back', compare:'Compare',
     all_metrics:'All metrics', your_trends:'Your trends',
     search_placeholder:'Search metrics...', esc_hint:'ESC to close',
     no_metrics_found:'No metrics found', no_data:'No data',
@@ -147,7 +147,7 @@ var I18N = {
   },
   ru: {
     app_title:'\u0417\u0434\u043e\u0440\u043e\u0432\u044c\u0435', explore:'\u041f\u043e\u0438\u0441\u043a', loading:'\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0434\u0430\u043d\u043d\u044b\u0445',
-    readiness:'\u0413\u043e\u0442\u043e\u0432\u043d\u043e\u0441\u0442\u044c', recovery:'\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435', back:'\u041d\u0430\u0437\u0430\u0434', compare:'\u0421\u0440\u0430\u0432\u043d\u0438\u0442\u044c',
+    readiness:'\u0413\u043e\u0442\u043e\u0432\u043d\u043e\u0441\u0442\u044c', recovery:'\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435', readiness_today_label:'\u0421\u0435\u0433\u043e\u0434\u043d\u044f', readiness_trend_label:'\u0422\u0440\u0435\u043d\u0434 7\u0434', back:'\u041d\u0430\u0437\u0430\u0434', compare:'\u0421\u0440\u0430\u0432\u043d\u0438\u0442\u044c',
     all_metrics:'\u0412\u0441\u0435 \u043c\u0435\u0442\u0440\u0438\u043a\u0438', your_trends:'\u0412\u0430\u0448\u0438 \u0442\u0440\u0435\u043d\u0434\u044b',
     search_placeholder:'\u041f\u043e\u0438\u0441\u043a \u043c\u0435\u0442\u0440\u0438\u043a...', esc_hint:'ESC \u2014 \u0437\u0430\u043a\u0440\u044b\u0442\u044c',
     no_metrics_found:'\u041c\u0435\u0442\u0440\u0438\u043a\u0438 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b', no_data:'\u041d\u0435\u0442 \u0434\u0430\u043d\u043d\u044b\u0445',
@@ -307,7 +307,7 @@ var I18N = {
   },
   sr: {
     app_title:'Zdravlje', explore:'Pretra\u017ei', loading:'U\u010ditavanje podataka',
-    readiness:'Spremnost', recovery:'Oporavak', back:'Nazad', compare:'Uporedi',
+    readiness:'Spremnost', recovery:'Oporavak', readiness_today_label:'Danas', readiness_trend_label:'7-dnevni trend', back:'Nazad', compare:'Uporedi',
     all_metrics:'Sve metrike', your_trends:'Va\u0161i trendovi',
     search_placeholder:'Pretra\u017ei metrike...', esc_hint:'ESC \u2014 zatvori',
     no_metrics_found:'Nema metrika', no_data:'Nema podataka',
