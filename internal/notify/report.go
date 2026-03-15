@@ -136,8 +136,9 @@ func staleDays(dataDate string, loc *time.Location) int {
 		return 0
 	}
 	now := time.Now().In(loc)
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	return int(today.Sub(t).Hours() / 24)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	dataDay := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+	return int(today.Sub(dataDay).Hours() / 24)
 }
 
 func warnMsg(m map[string]string, lang string, args ...any) string {
@@ -205,14 +206,15 @@ func formatMorning(b *health.BriefingResponse, lang string, loc *time.Location) 
 		}
 	}
 
-	// Readiness
-	emoji := statusEmoji["good"]
-	if b.ReadinessScore < 60 {
-		emoji = statusEmoji["low"]
-	} else if b.ReadinessScore < 75 {
-		emoji = statusEmoji["fair"]
+	// Readiness: show both today and 7-day trend
+	todayEmoji := statusEmoji["good"]
+	if b.ReadinessToday < 60 {
+		todayEmoji = statusEmoji["low"]
+	} else if b.ReadinessToday < 75 {
+		todayEmoji = statusEmoji["fair"]
 	}
-	sb.WriteString(fmt.Sprintf("%s <b>Readiness: %d/100</b> — %s\n", emoji, b.ReadinessScore, b.ReadinessLabel))
+	sb.WriteString(fmt.Sprintf("%s <b>Readiness today: %d/100</b> — %s\n", todayEmoji, b.ReadinessToday, b.ReadinessTodayLabel))
+	sb.WriteString(fmt.Sprintf("📈 7-day trend: %d/100 — %s\n", b.ReadinessScore, b.ReadinessLabel))
 	if b.ReadinessTip != "" {
 		sb.WriteString(fmt.Sprintf("<i>%s</i>\n", b.ReadinessTip))
 	}
