@@ -25,12 +25,20 @@ function renderBriefing(data) {
     var localeCode = LANG === 'ru' ? 'ru' : LANG === 'sr' ? 'sr-Latn' : 'en';
     var dateLabel = d.toLocaleDateString(localeCode, { weekday:'long', month:'long', day:'numeric' });
     var heroDate = dateLabel;
-    var isToday = data.date === todayStr();
-    if (!isToday) {
-      var daysAgo = Math.round((new Date() - d) / 86400000);
-      heroDate += '<span class="stale-badge">' + t('stale_prefix') + daysAgo + t('stale_suffix') + '</span>';
+    if (data.is_stale) {
+      heroDate += '<span class="stale-badge">' + t('stale_prefix') + data.days_ago + t('stale_suffix') + '</span>';
     }
     $('hero-date-strip').innerHTML = heroDate;
+
+    // Update "At a glance" title to reflect actual date, not "Today".
+    var glanceEl = document.querySelector('[data-i18n="at_a_glance"]');
+    if (glanceEl) {
+      if (data.is_stale) {
+        glanceEl.textContent = dateLabel;
+      } else {
+        glanceEl.textContent = t('at_a_glance');
+      }
+    }
   }
 
   // Metric cards
