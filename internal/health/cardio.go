@@ -9,6 +9,7 @@ func scoreCardio(d RawMetrics, ls LangStrings) *BriefingSection {
 
 	if len(d.SpO2) >= 3 {
 		recent := avg(d.SpO2[:min(3, len(d.SpO2))])
+		todaySpO2 := d.SpO2[0]
 		maxScore += 2
 		if recent >= 95 {
 			score += 2
@@ -16,21 +17,22 @@ func scoreCardio(d RawMetrics, ls LangStrings) *BriefingSection {
 			score += 1
 		}
 		note := ls["spo2_note_good"]
-		if recent < 95 {
+		if todaySpO2 < 95 {
 			note = ls["spo2_note_low"]
 		}
 		spo2Trend := "down"
-		if recent >= 95 {
+		if todaySpO2 >= 95 {
 			spo2Trend = "up"
 		}
 		sec.Details = append(sec.Details, BriefingDetail{
-			Label: ls["lbl_blood_o2"], Value: fmtFloat(recent, 1) + "%",
+			Label: ls["lbl_blood_o2"], Value: fmtFloat(todaySpO2, 1) + "%",
 			Note: note, Trend: spo2Trend,
 		})
 	}
 
 	if len(d.VO2) >= 3 {
 		recent := avg(d.VO2[:min(3, len(d.VO2))])
+		todayVO2 := d.VO2[0]
 		baseline := avg(d.VO2)
 		pct := pctChange(recent, baseline)
 		maxScore += 2
@@ -46,13 +48,14 @@ func scoreCardio(d RawMetrics, ls LangStrings) *BriefingSection {
 			note = ls["vo2_note_decline"]
 		}
 		sec.Details = append(sec.Details, BriefingDetail{
-			Label: ls["lbl_vo2"], Value: fmtFloat(recent, 1) + " ml/kg/min",
+			Label: ls["lbl_vo2"], Value: fmtFloat(todayVO2, 1) + " ml/kg/min",
 			Note: note, Trend: trend(pct, false),
 		})
 	}
 
 	if len(d.Resp) >= 3 {
 		recent := avg(d.Resp[:min(3, len(d.Resp))])
+		todayResp := d.Resp[0]
 		maxScore += 2
 		if recent >= 12 && recent <= 20 {
 			score += 2
@@ -60,15 +63,15 @@ func scoreCardio(d RawMetrics, ls LangStrings) *BriefingSection {
 			score += 1
 		}
 		note := ls["resp_note_normal"]
-		if recent < 12 || recent > 20 {
+		if todayResp < 12 || todayResp > 20 {
 			note = ls["resp_note_outside"]
 		}
 		respTrend := "down"
-		if recent >= 12 && recent <= 20 {
+		if todayResp >= 12 && todayResp <= 20 {
 			respTrend = "up"
 		}
 		sec.Details = append(sec.Details, BriefingDetail{
-			Label: ls["lbl_resp"], Value: fmtFloat(recent, 1) + " br/min",
+			Label: ls["lbl_resp"], Value: fmtFloat(todayResp, 1) + " br/min",
 			Note: note, Trend: respTrend,
 		})
 	}

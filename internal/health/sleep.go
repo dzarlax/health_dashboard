@@ -53,15 +53,18 @@ func scoreSleep(d RawMetrics, ls LangStrings) *BriefingSection {
 		}
 	}
 
+	// Display values use today (index 0); scoring uses 3-day avg above.
+	todaySleep := d.Sleep[0]
+
 	if score >= 5 {
 		sec.Status = "good"
-		sec.Summary = fmt.Sprintf(ls["sleep_summary_good"], recent)
+		sec.Summary = fmt.Sprintf(ls["sleep_summary_good"], todaySleep)
 	} else if score >= 3 {
 		sec.Status = "fair"
-		sec.Summary = fmt.Sprintf(ls["sleep_summary_fair"], recent)
+		sec.Summary = fmt.Sprintf(ls["sleep_summary_fair"], todaySleep)
 	} else {
 		sec.Status = "low"
-		sec.Summary = fmt.Sprintf(ls["sleep_summary_low"], recent)
+		sec.Summary = fmt.Sprintf(ls["sleep_summary_low"], todaySleep)
 	}
 
 	t := trend(pct, false)
@@ -72,37 +75,42 @@ func scoreSleep(d RawMetrics, ls LangStrings) *BriefingSection {
 		durationNote = ls["sleep_dur_less"]
 	}
 	sec.Details = append(sec.Details, BriefingDetail{
-		Label: ls["lbl_duration"], Value: fmt.Sprintf(ls["unit_hrs_night"], recent), Note: durationNote, Trend: t,
+		Label: ls["lbl_duration"], Value: fmt.Sprintf(ls["unit_hrs_night"], todaySleep), Note: durationNote, Trend: t,
 	})
 
+	// Deep/REM percentages: today's values relative to today's total.
+	todayDeepPct := 0.0
+	if len(d.Deep) > 0 && todaySleep > 0 {
+		todayDeepPct = d.Deep[0] / todaySleep * 100
+	}
 	if deepPct > 0 {
 		dNote := ls["sleep_deep_good"]
-		if deepPct < 15 {
+		if todayDeepPct < 15 {
 			dNote = ls["sleep_deep_low"]
 		}
 		deepTrend := "down"
-		if deepPct >= 15 {
+		if todayDeepPct >= 15 {
 			deepTrend = "up"
 		}
 		sec.Details = append(sec.Details, BriefingDetail{
-			Label: ls["lbl_deep_sleep"], Value: fmt.Sprintf(ls["unit_pct_total"], deepPct),
+			Label: ls["lbl_deep_sleep"], Value: fmt.Sprintf(ls["unit_pct_total"], todayDeepPct),
 			Note: dNote, Trend: deepTrend,
 		})
 	}
 
-	if len(d.REM) >= 3 && recent > 0 {
-		recentRem := avg(d.REM[:min(3, len(d.REM))])
-		remPct := recentRem / recent * 100
+	todayRemPct := 0.0
+	if len(d.REM) > 0 && todaySleep > 0 {
+		todayRemPct = d.REM[0] / todaySleep * 100
 		rNote := ls["sleep_rem_good"]
-		if remPct < 20 {
+		if todayRemPct < 20 {
 			rNote = ls["sleep_rem_low"]
 		}
 		remTrend := "stable"
-		if remPct >= 20 {
+		if todayRemPct >= 20 {
 			remTrend = "up"
 		}
 		sec.Details = append(sec.Details, BriefingDetail{
-			Label: ls["lbl_rem"], Value: fmt.Sprintf(ls["unit_pct_total"], remPct),
+			Label: ls["lbl_rem"], Value: fmt.Sprintf(ls["unit_pct_total"], todayRemPct),
 			Note: rNote, Trend: remTrend,
 		})
 	}
@@ -126,22 +134,23 @@ func scoreSleep(d RawMetrics, ls LangStrings) *BriefingSection {
 }
 
 func computeSleepAnalysis(d RawMetrics) *SleepAnalysis {
-	if len(d.Sleep) < 3 {
+	if len(d.Sleep) == 0 {
 		return nil
 	}
 	sa := SleepAnalysis{}
-	recentSleep := avg(d.Sleep[:min(3, len(d.Sleep))])
-	if len(d.Deep) >= 3 {
-		sa.DeepAvg = math.Round(avg(d.Deep[:min(3, len(d.Deep))])*100) / 100
+	// Show last night's values, not 3-night averages.
+	todaySleep := d.Sleep[0]
+	if len(d.Deep) > 0 {
+		sa.DeepAvg = math.Round(d.Deep[0]*100) / 100
 	}
-	if len(d.REM) >= 3 {
-		sa.REMAvg = math.Round(avg(d.REM[:min(3, len(d.REM))])*100) / 100
+	if len(d.REM) > 0 {
+		sa.REMAvg = math.Round(d.REM[0]*100) / 100
 	}
-	if len(d.Awake) >= 3 {
-		sa.AwakeAvg = math.Round(avg(d.Awake[:min(3, len(d.Awake))])*100) / 100
+	if len(d.Awake) > 0 {
+		sa.AwakeAvg = math.Round(d.Awake[0]*100) / 100
 	}
-	if recentSleep > 0 {
-		sa.Efficiency = math.Round((recentSleep-sa.AwakeAvg)/recentSleep*100*10) / 10
+	if todaySleep > 0 {
+		sa.Efficiency = math.Round((todaySleep-sa.AwakeAvg)/todaySleep*100*10) / 10
 		if sa.Efficiency < 0 {
 			sa.Efficiency = 0
 		}
