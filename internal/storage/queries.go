@@ -73,7 +73,13 @@ func (s *DB) GetLatestMetricValues() ([]LatestValue, error) {
 			GROUP BY metric_name
 		),
 		sum_agg AS (
-			SELECT metric_name, max_date, MAX(src_sum) AS val FROM (
+			SELECT metric_name, max_date,
+				CASE
+					WHEN SUM(CASE WHEN source LIKE '%%|%%' THEN 1 ELSE 0 END) > 0
+					THEN SUM(CASE WHEN source LIKE '%%|%%' THEN src_sum ELSE 0 END)
+					ELSE MAX(src_sum)
+				END AS val
+			FROM (
 				SELECT h.metric_name, l.max_date, h.source, SUM(h.avg_val) AS src_sum
 				FROM hourly_metrics h
 				JOIN latest_day l ON h.metric_name = l.metric_name
@@ -170,13 +176,18 @@ func (s *DB) GetMetricData(metric, from, to, bucket, aggFunc string) ([]DataPoin
 // metricDataFromCache reads from a pre-aggregated table (minute_metrics or
 // hourly_metrics), combining per-source rows using the metric's combine function.
 func (s *DB) metricDataFromCache(table, col, metric, from, to string) ([]DataPoint, error) {
-	combine := combineFuncFor(metric)
+	var combineVal string
+	if SumMetrics[metric] {
+		combineVal = sumCombineExpr("avg_val")
+	} else {
+		combineVal = "AVG(avg_val)"
+	}
 	query := fmt.Sprintf(`
-		SELECT %s, %s(avg_val), MIN(min_val), MAX(max_val)
+		SELECT %s, %s, MIN(min_val), MAX(max_val)
 		FROM %s
 		WHERE metric_name = ? AND %s >= ? AND %s <= ?
 		GROUP BY %s
-		ORDER BY %s`, col, combine, table, col, col, col, col)
+		ORDER BY %s`, col, combineVal, table, col, col, col, col)
 
 	rows, err := s.db.Query(query, metric, from, to)
 	if err != nil {
@@ -251,19 +262,19 @@ func (s *DB) metricDataDayFromHourly(metric, from, to string) ([]DataPoint, erro
 
 	var query string
 	if SumMetrics[metric] {
-		// SUM metrics: first SUM hourly values per source per day,
-		// then MAX across sources to avoid double-counting overlapping devices.
-		query = `
-			SELECT day, MAX(src_sum), MIN(src_min), MAX(src_max)
+		// SUM metrics: smart combine per hour, then SUM across hours per day.
+		combineVal := sumCombineExpr("avg_val")
+		query = fmt.Sprintf(`
+			SELECT day, SUM(hour_val), MIN(hour_min), MAX(hour_max)
 			FROM (
-				SELECT substr(hour,1,10) AS day, source,
-				       SUM(avg_val) AS src_sum, MIN(min_val) AS src_min, MAX(max_val) AS src_max
+				SELECT substr(hour,1,10) AS day, hour,
+				       %s AS hour_val, MIN(min_val) AS hour_min, MAX(max_val) AS hour_max
 				FROM hourly_metrics
 				WHERE metric_name = ? AND hour >= ? AND hour <= ?
-				GROUP BY day, source
+				GROUP BY hour
 			)
 			GROUP BY day
-			ORDER BY day`
+			ORDER BY day`, combineVal)
 	} else {
 		query = `
 			SELECT substr(hour,1,10), AVG(avg_val), MIN(min_val), MAX(max_val)
@@ -299,17 +310,18 @@ func (s *DB) metricDataRaw(metric, from, to, bucket, aggFunc string) ([]DataPoin
 
 	var query string
 	if SumMetrics[metric] {
-		// SUM metrics: per source SUM, then MAX across sources to avoid
-		// double-counting overlapping devices.
-		query = `SELECT bucket, MAX(source_sum), MIN(source_min), MAX(source_max)
+		// SUM metrics: smart combine — prefer pipe-source (HealthKit deduped),
+		// fall back to MAX per single-source (XML import overlap).
+		combineVal := sumCombineExpr("source_sum")
+		query = fmt.Sprintf(`SELECT bucket, %s, MIN(source_min), MAX(source_max)
 			FROM (
-				SELECT ` + bucketExpr + ` AS bucket, source, SUM(qty) AS source_sum, MIN(qty) AS source_min, MAX(qty) AS source_max
+				SELECT %s AS bucket, source, SUM(qty) AS source_sum, MIN(qty) AS source_min, MAX(qty) AS source_max
 				FROM metric_points
 				WHERE metric_name = ? AND date >= ? AND date <= ? AND qty > 0
 				GROUP BY bucket, source
 			)
 			GROUP BY bucket
-			ORDER BY bucket`
+			ORDER BY bucket`, combineVal, bucketExpr)
 	} else {
 		query = "SELECT " + bucketExpr + " as bucket, " + aggFunc + `(qty), MIN(qty), MAX(qty)
 			FROM metric_points
@@ -456,15 +468,15 @@ func (s *DB) GetDashboard() (*DashboardResponse, error) {
 	queryDay := func(metric, agg, day string) float64 {
 		var val float64
 		if agg == "SUM" {
-			// MAX(per-source SUM) avoids double-counting overlapping devices
-			// (Apple Watch + iPhone + RingConn all record the same steps/calories/sleep).
-			s.db.QueryRow(`
-				SELECT COALESCE(MAX(source_sum), 0) FROM (
-					SELECT source, SUM(avg_val) AS source_sum
+			// Smart combine per hour, then SUM across hours for the day.
+			combineVal := sumCombineExpr("avg_val")
+			s.db.QueryRow(fmt.Sprintf(`
+				SELECT COALESCE(SUM(hour_val), 0) FROM (
+					SELECT hour, %s AS hour_val
 					FROM hourly_metrics
 					WHERE metric_name=? AND substr(hour,1,10)=?
-					GROUP BY source
-				)`, metric, day,
+					GROUP BY hour
+				)`, combineVal), metric, day,
 			).Scan(&val)
 		} else {
 			s.db.QueryRow(
@@ -552,28 +564,28 @@ type SleepNight struct {
 // For each phase it picks MAX(source_sum) across devices to avoid double-counting
 // when two wearables (e.g. Apple Watch + RingConn) both record the same night.
 func (s *DB) GetSleepSummary(from, to string) ([]SleepNight, error) {
-	rows, err := s.db.Query(`
+	combine := sumCombineExpr("source_sum")
+	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT d,
-			MAX(CASE WHEN metric_name='sleep_total' THEN source_max ELSE 0 END),
-			MAX(CASE WHEN metric_name='sleep_deep'  THEN source_max ELSE 0 END),
-			MAX(CASE WHEN metric_name='sleep_rem'   THEN source_max ELSE 0 END),
-			MAX(CASE WHEN metric_name='sleep_core'  THEN source_max ELSE 0 END),
-			MAX(CASE WHEN metric_name='sleep_awake' THEN source_max ELSE 0 END)
+			MAX(CASE WHEN metric_name='sleep_total' THEN combined ELSE 0 END),
+			MAX(CASE WHEN metric_name='sleep_deep'  THEN combined ELSE 0 END),
+			MAX(CASE WHEN metric_name='sleep_rem'   THEN combined ELSE 0 END),
+			MAX(CASE WHEN metric_name='sleep_core'  THEN combined ELSE 0 END),
+			MAX(CASE WHEN metric_name='sleep_awake' THEN combined ELSE 0 END)
 		FROM (
-			SELECT d, metric_name, MAX(source_sum) AS source_max
+			SELECT d, metric_name, %s AS combined
 			FROM (
-				SELECT substr(date,1,10) AS d, metric_name,
-					SUBSTR(source, 1, INSTR(source||'|','|')-1) AS src,
+				SELECT substr(date,1,10) AS d, metric_name, source,
 					SUM(qty) AS source_sum
 				FROM metric_points
 				WHERE metric_name IN ('sleep_total','sleep_deep','sleep_rem','sleep_core','sleep_awake')
 				  AND substr(date,1,10) >= ? AND substr(date,1,10) <= ? AND qty > 0
-				GROUP BY d, metric_name, src
+				GROUP BY d, metric_name, source
 			)
 			GROUP BY d, metric_name
 		)
 		GROUP BY d
-		ORDER BY d`,
+		ORDER BY d`, combine),
 		from, to)
 	if err != nil {
 		return nil, err

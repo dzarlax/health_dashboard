@@ -18,14 +18,33 @@ func aggFuncFor(metric string) string {
 
 // combineFuncFor returns the SQL aggregate to combine per-source pre-computed
 // values when merging sources at query time.
-//   - SUM metrics: MAX(per-source sum) avoids double-counting overlapping devices
-//     (Apple Watch + iPhone + RingConn all count the same steps/calories/sleep)
-//   - AVG metrics: AVG
+//   - AVG metrics: AVG across sources
+//   - SUM metrics: smart dedup (see sumCombineExpr)
 func combineFuncFor(metric string) string {
 	if SumMetrics[metric] {
-		return "MAX"
+		return "MAX" // only used in fallback paths; prefer sumCombineExpr
 	}
 	return "AVG"
+}
+
+// sumCombineExpr returns a SQL CASE expression that correctly combines
+// per-source values for SUM metrics. It handles two data patterns:
+//
+//   - Health Auto Export: sends HealthKit-deduplicated records with
+//     pipe-separated source names ("Watch|iPhone|Ring"). These are
+//     non-overlapping fragments and should be SUMmed.
+//   - Apple Health XML import: sends raw per-device records ("Watch",
+//     "iPhone") that overlap. MAX picks the most complete device.
+//
+// Logic: if any pipe-separated source exists in the bucket, SUM only
+// those records (authoritative HealthKit dedup). Otherwise MAX across
+// single-device sources.
+func sumCombineExpr(valCol string) string {
+	return `CASE
+		WHEN SUM(CASE WHEN source LIKE '%|%' THEN 1 ELSE 0 END) > 0
+		THEN SUM(CASE WHEN source LIKE '%|%' THEN ` + valCol + ` ELSE 0 END)
+		ELSE MAX(` + valCol + `)
+	END`
 }
 
 // SumMetrics is the canonical set of metrics that should be SUMmed within a bucket.
@@ -160,20 +179,18 @@ func (s *DB) buildDailyMetricCol(col, metric string, force bool) error {
 
 	var query string
 	if SumMetrics[metric] {
-		// SUM metrics (steps, calories, sleep, etc.) are recorded by multiple
-		// devices that overlap (Apple Watch + iPhone + RingConn all count
-		// the same steps). HealthKit deduplicates on-device, but after Apple
-		// Health XML import raw records from every source end up in the DB.
-		// Per source: SUM values across the day. Across sources: MAX to pick
-		// the most complete source and avoid double-counting.
+		// SUM metrics: smart combine per hour, then SUM across hours per day.
+		// Per hour: prefer pipe-source (HealthKit deduped) when available,
+		// fall back to MAX per single-source (XML import overlap).
+		combineVal := sumCombineExpr("avg_val")
 		query = fmt.Sprintf(`
-			SELECT day, MAX(src_sum) FROM (
-				SELECT substr(hour,1,10) AS day, source, SUM(avg_val) AS src_sum
+			SELECT day, SUM(hour_val) FROM (
+				SELECT substr(hour,1,10) AS day, hour, %s AS hour_val
 				FROM hourly_metrics
 				WHERE metric_name = ? %s
-				GROUP BY day, source
+				GROUP BY hour
 			)
-			GROUP BY day`, fromClause)
+			GROUP BY day`, combineVal, fromClause)
 	} else {
 		query = fmt.Sprintf(`
 			SELECT substr(hour,1,10), AVG(avg_val)
@@ -244,6 +261,13 @@ func (s *DB) buildMinuteMetric(metric, agg string, force bool) error {
 		)`
 	}
 
+	// For SUM metrics: use MAX per (minute, source) to deduplicate re-synced
+	// records from Health Auto Export (same qty at e.g. 11:00:00 and 11:00:30).
+	// For AVG metrics: use AVG as before.
+	minuteAgg := agg
+	if agg == "SUM" {
+		minuteAgg = "MAX"
+	}
 	_, err := s.db.Exec(fmt.Sprintf(`
 		INSERT OR REPLACE INTO minute_metrics (metric_name, minute, source, avg_val, min_val, max_val)
 		SELECT metric_name,
@@ -253,7 +277,7 @@ func (s *DB) buildMinuteMetric(metric, agg string, force bool) error {
 		FROM metric_points
 		WHERE metric_name = ? AND qty > 0 %s %s
 		GROUP BY metric_name, minute, source
-	`, agg, sleepDedup, fromClause), metric)
+	`, minuteAgg, sleepDedup, fromClause), metric)
 	return err
 }
 
