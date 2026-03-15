@@ -10,7 +10,7 @@ function renderBriefing(data) {
     return;
   }
 
-  // Readiness card: big number = today, bar = 7-day trend
+  // Readiness card: big number = today (or latest day), bar = 7-day trend
   var todayScore = data.readiness_today || data.readiness_score || 0;
   var trendScore = data.readiness_score || 0;
   $('readiness-score').textContent = todayScore || '--';
@@ -18,6 +18,18 @@ function renderBriefing(data) {
   $('readiness-tip').textContent = data.readiness_tip || '';
   $('recovery-pct-label').textContent = trendScore + '%';
   $('recovery-bar-fill').style.width = trendScore + '%';
+
+  // Update hero label: "Today" only if data is fresh, otherwise show date.
+  var heroLabel = $('readiness-label-top');
+  if (heroLabel) {
+    if (data.is_stale && data.date) {
+      var dd = new Date(data.date + 'T12:00:00');
+      var loc = LANG === 'ru' ? 'ru' : LANG === 'sr' ? 'sr-Latn' : 'en';
+      heroLabel.textContent = dd.toLocaleDateString(loc, { day:'numeric', month:'short' });
+    } else {
+      heroLabel.textContent = t('readiness_today_label');
+    }
+  }
 
   // Date in hero
   if (data.date) {
