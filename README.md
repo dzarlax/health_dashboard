@@ -193,6 +193,12 @@ The cache tables (`minute_metrics`, `hourly_metrics`, `daily_scores`) are also r
 - After each `POST /health` sync (debounced, 2-minute delay)
 - On demand via the Settings panel in the web UI
 
+## Known Limitations
+
+- **Timezone changes (travel)** — day boundaries use the device's local time at recording. When you travel across timezones, Apple Watch/iPhone update the offset automatically. Travel days may show reduced step counts, calories, and sleep duration because the calendar day is "compressed" (flying east) or "stretched" (flying west). Readiness scores self-correct after 1–2 days in the new timezone.
+- **Multi-device deduplication** — when multiple devices (Apple Watch, iPhone, RingConn) record overlapping data, the system uses HealthKit-deduplicated records (pipe-separated source names) when available, falling back to MAX-per-source for XML-imported data. This handles most cases correctly but edge cases with partial syncs may slightly under- or over-count.
+- **Percentage metrics from Apple Health XML** — SpO₂, body fat, walking asymmetry, etc. are stored as fractions (0.0–1.0) in Apple Health XML but as percentages (0–100) by Health Auto Export. The import automatically converts fractions to percentages, and existing data is migrated on server startup.
+
 ## Backups
 
 The entire database is a single file: `./data/health.db`. Back it up by copying that file. For a live backup while the server is running:

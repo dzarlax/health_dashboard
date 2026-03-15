@@ -453,6 +453,8 @@ The CV of the 7-day rolling average is a strong indicator of maladaptation to tr
 
 12. **Respiratory rate and wrist temperature not in Readiness** — these are strong illness markers but are only used in the Cardio section card, not in the main Readiness formula. Adding them could improve early illness detection but would also add noise for healthy users.
 
+13. **Timezone changes (travel)** — day boundaries are determined by `substr(date, 1, 10)` which uses the device's local time at recording. When travelling across timezones, Apple Watch/iPhone automatically update the offset (e.g. `+0100` → `+0800`). This means travel days may appear "compressed" (fewer hours when flying east) or "stretched" (more hours when flying west), causing artificially low step counts, calories, and sleep duration for those days. Readiness scores may dip temporarily due to the distorted data. The system self-corrects once 1–2 full days pass in the new timezone. A future improvement could detect mixed timezone offsets within a single day and flag it as a travel day.
+
 ---
 
 ## References
