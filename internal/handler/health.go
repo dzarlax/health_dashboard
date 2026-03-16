@@ -21,6 +21,11 @@ func New(db *storage.DB, apiKey string, onNewData func()) *Handler {
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/health", h.auth(h.health))
+	// Filtered endpoints: accept all metrics but keep only SUM or AVG types.
+	// This allows two Health Auto Export automations with identical "All Metrics"
+	// but different Time Grouping (Hour vs Default) to hit different endpoints.
+	mux.HandleFunc("/health/hourly", h.auth(h.healthFiltered("sum")))
+	mux.HandleFunc("/health/vitals", h.auth(h.healthFiltered("avg")))
 }
 
 func (h *Handler) auth(next http.HandlerFunc) http.HandlerFunc {
@@ -97,6 +102,86 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"status": "ok", "id": id, "points": len(points)})
+}
+
+// healthFiltered returns a handler that accepts the same payload as /health
+// but keeps only metrics of the given kind ("sum" or "avg").
+// "sum" keeps SUM metrics (steps, calories, sleep, distance, etc.)
+// "avg" keeps everything else (heart rate, HRV, SpO2, temperature, etc.)
+// Unknown/new metrics default to "avg".
+func (h *Handler) healthFiltered(kind string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "filter": kind})
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			log.Printf("read body: %v", err)
+			http.Error(w, "failed to read body", http.StatusInternalServerError)
+			return
+		}
+		defer r.Body.Close()
+
+		allPoints, parseErr := parseMetricPoints(body)
+		if parseErr != nil {
+			log.Printf("parse payload: %v (will still save raw)", parseErr)
+		}
+
+		// Filter points by metric type.
+		var points []storage.MetricPoint
+		for _, p := range allPoints {
+			isSUM := storage.SumMetrics[p.MetricName]
+			if (kind == "sum" && isSUM) || (kind == "avg" && !isSUM) {
+				points = append(points, p)
+			}
+		}
+
+		rec := storage.Record{
+			AutomationName:        r.Header.Get("automation-name"),
+			AutomationID:          r.Header.Get("automation-id"),
+			AutomationAggregation: r.Header.Get("automation-aggregation"),
+			AutomationPeriod:      r.Header.Get("automation-period"),
+			SessionID:             r.Header.Get("session-id"),
+			ContentType:           r.Header.Get("Content-Type"),
+			Payload:               string(body),
+		}
+
+		id, err := h.db.Insert(rec, points)
+		if err != nil {
+			log.Printf("insert: %v", err)
+			http.Error(w, "failed to save record", http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("saved record id=%d points=%d (filtered %s, dropped %d)", id, len(points), kind, len(allPoints)-len(points))
+
+		dateSet := make(map[string]bool)
+		for _, p := range points {
+			if len(p.Date) >= 10 {
+				dateSet[p.Date[:10]] = true
+			}
+		}
+		if len(dateSet) > 0 {
+			dates := make([]string, 0, len(dateSet))
+			for d := range dateSet {
+				dates = append(dates, d)
+			}
+			h.db.UpsertRecentCache(dates)
+		}
+
+		if h.onNewData != nil {
+			go h.onNewData()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"status": "ok", "id": id, "points": len(points), "filter": kind, "dropped": len(allPoints) - len(points)})
+	}
 }
 
 type payload struct {
