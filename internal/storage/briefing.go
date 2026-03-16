@@ -118,19 +118,18 @@ func (s *DB) rawMetricsFromPoints(lastDate string) *health.RawMetrics {
 		var rows *sql.Rows
 		var err error
 		if agg == "SUM" {
-			// SUM metrics: per source SUM, then MAX across sources to avoid
-			// double-counting overlapping devices (Apple Watch + iPhone + RingConn).
-			rows, err = s.db.Query(`
+			sleepDedup := sleepDedupClause(metric)
+			rows, err = s.db.Query(fmt.Sprintf(`
 				SELECT MAX(source_sum)
 				FROM (
 					SELECT substr(date,1,10) AS d, source, SUM(qty) AS source_sum
 					FROM metric_points
-					WHERE metric_name = ? AND substr(date,1,10) >= ? AND qty > 0
+					WHERE metric_name = ? AND substr(date,1,10) >= ? AND qty > 0 %s
 					GROUP BY d, source
 				)
 				GROUP BY d
 				ORDER BY d DESC
-				LIMIT ?`,
+				LIMIT ?`, sleepDedup),
 				metric, subtractDays(lastDate, days), days)
 		} else {
 			rows, err = s.db.Query(`
@@ -160,17 +159,18 @@ func (s *DB) rawMetricsFromPoints(lastDate string) *health.RawMetrics {
 		var rows *sql.Rows
 		var err error
 		if agg == "SUM" {
-			rows, err = s.db.Query(`
+			sleepDedup := sleepDedupClause(metric)
+			rows, err = s.db.Query(fmt.Sprintf(`
 				SELECT d, MAX(source_sum)
 				FROM (
 					SELECT substr(date,1,10) AS d, source, SUM(qty) AS source_sum
 					FROM metric_points
-					WHERE metric_name = ? AND substr(date,1,10) >= ? AND qty > 0
+					WHERE metric_name = ? AND substr(date,1,10) >= ? AND qty > 0 %s
 					GROUP BY d, source
 				)
 				GROUP BY d
 				ORDER BY d DESC
-				LIMIT ?`,
+				LIMIT ?`, sleepDedup),
 				metric, subtractDays(lastDate, days), days)
 		} else {
 			rows, err = s.db.Query(`

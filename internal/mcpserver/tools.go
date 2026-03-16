@@ -118,8 +118,7 @@ Schema:
   hourly_metrics(metric_name TEXT, hour TEXT,  -- "YYYY-MM-DD HH:00"
     source TEXT, avg_val REAL, min_val REAL, max_val REAL)
 
-  minute_metrics(metric_name TEXT, minute TEXT, -- "YYYY-MM-DD HH:MM"
-    source TEXT, avg_val REAL, min_val REAL, max_val REAL)
+  minute_metrics — DEPRECATED, no longer populated. Use metric_points for minute-level data.
 
   health_records(id, received_at DATETIME, automation_name TEXT, session_id TEXT)
 

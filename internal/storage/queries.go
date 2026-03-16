@@ -161,7 +161,8 @@ func (s *DB) GetMetricData(metric, from, to, bucket, aggFunc string) ([]DataPoin
 
 	switch bucket {
 	case "minute":
-		return s.metricDataFromCache("minute_metrics", "minute", metric, from, to)
+		// Read directly from metric_points — minute_metrics is no longer populated.
+		return s.metricDataRaw(metric, from, to, "minute", aggFuncFor(metric))
 	case "hour":
 		return s.metricDataFromCache("hourly_metrics", "hour", metric, from, to)
 	case "day":
@@ -362,8 +363,11 @@ func (s *DB) GetMetricDataBySource(metric, from, to, bucket, aggFunc string) ([]
 }
 
 func (s *DB) metricDataBySourceFromCache(metric, from, to, bucket string) ([]SourceDataPoints, error) {
-	table, col := "minute_metrics", "minute"
-	if bucket == "hour" {
+	// minute_metrics is no longer populated; minute bucket falls through to raw.
+	table, col := "hourly_metrics", "hour"
+	if bucket == "minute" {
+		return s.metricDataBySourceRaw(metric, from, to, bucket, aggFuncFor(metric))
+	} else if bucket == "hour" {
 		table, col = "hourly_metrics", "hour"
 	} else if bucket == "day" {
 		// Aggregate hourly_metrics down to day per source.

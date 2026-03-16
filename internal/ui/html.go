@@ -58,6 +58,9 @@ const htmlBody = `
         <div id="metric-cards-grid"></div>
       </div>
 
+      <!-- Health alerts -->
+      <div id="alerts-panel" style="display:none"></div>
+
       <!-- Section detail cards -->
       <div id="sections-area">
         <div class="section-title" data-i18n="health_sections">Health overview</div>

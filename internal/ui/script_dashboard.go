@@ -88,6 +88,24 @@ function renderBriefing(data) {
     });
   }
 
+  // Health alerts (anomalies)
+  var alertsEl = $('alerts-panel');
+  if (alertsEl) {
+    if (data.alerts && data.alerts.length) {
+      alertsEl.style.display = '';
+      alertsEl.innerHTML = '';
+      data.alerts.forEach(function(a) {
+        var icon = a.severity === 'critical' ? '🔴' : '⚠️';
+        var div = document.createElement('div');
+        div.className = 'alert-item alert-' + a.severity;
+        div.innerHTML = '<span class="alert-icon">' + icon + '</span><span class="alert-text">' + a.text + '</span>';
+        alertsEl.appendChild(div);
+      });
+    } else {
+      alertsEl.style.display = 'none';
+    }
+  }
+
   // Sleep analysis
   if (data.sleep) {
     $('sleep-section').style.display = '';

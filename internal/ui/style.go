@@ -222,6 +222,19 @@ body {
 .insight-dot.positive { background: var(--good); }
 .insight-dot.warning  { background: var(--fair); }
 
+/* ── Health alerts ── */
+#alerts-panel {
+  display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;
+}
+.alert-item {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  border-radius: var(--radius); font-size: 14px; line-height: 1.4;
+}
+.alert-warning { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.alert-critical { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+.alert-icon { font-size: 16px; flex-shrink: 0; }
+.alert-text { flex: 1; }
+
 /* ── Sleep section (full width) ── */
 #sleep-section {
   background: var(--surface); border-radius: var(--radius);

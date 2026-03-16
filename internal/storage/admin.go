@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"fmt"
 	"log"
 	"time"
 )
@@ -164,15 +163,10 @@ func (s *DB) GetDataGaps(minGapDays, minHours int) ([]DataGap, error) {
 // InvalidateDateRangeAggregates deletes all pre-aggregated rows for [from, to]
 // (inclusive, YYYY-MM-DD) so that the next backfill recomputes them from metric_points.
 func (s *DB) InvalidateDateRangeAggregates(from, to string) {
-	for _, tbl := range []string{"minute_metrics", "hourly_metrics"} {
-		col := "minute"
-		if tbl == "hourly_metrics" {
-			col = "hour"
-		}
-		q := fmt.Sprintf("DELETE FROM %s WHERE substr(%s,1,10) >= ? AND substr(%s,1,10) <= ?", tbl, col, col)
-		if _, err := s.db.Exec(q, from, to); err != nil {
-			log.Printf("invalidate %s [%s,%s]: %v", tbl, from, to, err)
-		}
+	if _, err := s.db.Exec(
+		"DELETE FROM hourly_metrics WHERE substr(hour,1,10) >= ? AND substr(hour,1,10) <= ?", from, to,
+	); err != nil {
+		log.Printf("invalidate hourly_metrics [%s,%s]: %v", from, to, err)
 	}
 	if _, err := s.db.Exec("DELETE FROM daily_scores WHERE date >= ? AND date <= ?", from, to); err != nil {
 		log.Printf("invalidate daily_scores [%s,%s]: %v", from, to, err)
@@ -186,9 +180,8 @@ func (s *DB) GetCacheStatus() (*CacheStatus, error) {
 	s.db.QueryRow(`SELECT COUNT(*) FROM metric_points`).Scan(&cs.RawPoints.Rows)
 	s.db.QueryRow(`SELECT COUNT(DISTINCT metric_name) FROM hourly_metrics`).Scan(&cs.RawPoints.Metrics)
 
-	s.db.QueryRow(
-		`SELECT COUNT(*), MIN(minute), MAX(minute) FROM minute_metrics`,
-	).Scan(&cs.MinuteCache.Rows, &cs.MinuteCache.Oldest, &cs.MinuteCache.Newest)
+	// minute_metrics is no longer used (reads go to metric_points directly).
+	// Keep the struct field for API compat but leave it zeroed.
 
 	s.db.QueryRow(
 		`SELECT COUNT(*), MIN(hour), MAX(hour) FROM hourly_metrics`,
