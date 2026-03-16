@@ -92,18 +92,50 @@ All configuration is via environment variables in `docker-compose.yml`:
 
 ## Health Auto Export Setup
 
-1. Open **Health Auto Export** on iPhone
-2. Go to **Automations** → Create new automation
-3. Set **Export format**: `JSON`
-4. Set **Destination**: `REST API`
-5. Set **URL**: `http://your-server:8080/health`
-6. Add **Header**: `X-API-Key: your-secret-key` (must match `API_KEY`)
-7. Choose metrics and sync frequency
+You need **two automations** in [Health Auto Export](https://www.healthyapps.dev) — one for cumulative metrics (steps, calories, sleep) with hourly grouping, and one for instantaneous metrics (heart rate, HRV, SpO₂) with default (minute-level) grouping. This prevents HealthKit redistribution from inflating step counts while preserving granular heart rate data.
 
-The app will POST data periodically. Supported metric types:
-- Standard metrics with `qty` field (steps, calories, distance, etc.)
-- `heart_rate` — uses `Avg` field from min/max/avg structure
-- `sleep_analysis` — automatically split into `sleep_deep`, `sleep_rem`, `sleep_core`, `sleep_awake`, `sleep_total`
+### Automation 1 — Activity & Sleep (hourly)
+
+1. Open **Health Auto Export** → **Automations** → **Create new**
+2. Set **Destination**: `REST API`
+3. Set **URL**: `http://your-server:8080/health`
+4. Add **Header**: `X-API-Key: your-secret-key`
+5. **Select Health Metrics** — pick only these:
+   - Step Count, Active Energy, Basal Energy Burned, Apple Exercise Time
+   - Apple Stand Time, Apple Stand Hour, Flights Climbed
+   - Walking + Running Distance, Distance Cycling, Distance Swimming
+   - Time in Daylight, Physical Effort
+   - Sleep Analysis
+6. **Export Settings**:
+   - Export Format: `JSON`
+   - Export Version: `v2`
+   - Date Range: `Since Last Sync`
+   - **Summarize Data: ON** ✅
+   - **Time Grouping: Hour** ← critical for accurate step counts
+7. **Sync Cadence**: Quantity `5`, Interval `Minutes`
+
+### Automation 2 — Vitals & Body (minute-level)
+
+1. Create another automation with the same URL and API key header
+2. **Select Health Metrics** — pick only these:
+   - Heart Rate, Resting Heart Rate, Heart Rate Variability, Walking Heart Rate Average
+   - Blood Oxygen Saturation, Respiratory Rate, VO₂ Max
+   - Wrist Temperature, Breathing Disturbances
+   - Blood Pressure (Systolic & Diastolic)
+   - Environmental Audio Exposure, Headphone Audio Exposure
+   - Walking Speed, Walking Step Length, Walking Asymmetry, Walking Double Support, Walking Steadiness
+   - Body Mass, Body Fat Percentage, Height
+3. **Export Settings**:
+   - Export Format: `JSON`
+   - Export Version: `v2`
+   - Date Range: `Since Last Sync`
+   - **Summarize Data: ON** ✅
+   - **Time Grouping: Default** (minute-level granularity)
+4. **Sync Cadence**: Quantity `5`, Interval `Minutes`
+
+> **Why two automations?** HealthKit redistributes cumulative metrics (steps, calories) across time buckets with fractional values. With minute-level grouping, the sum of these fractions exceeds the actual total by ~20–30%. Hourly grouping uses `HKStatisticsQuery` which returns correctly deduplicated totals. Instantaneous metrics (heart rate, SpO₂) don't have this problem — they are averaged, not summed — so minute-level grouping preserves useful granularity.
+
+> **Important:** Do not overlap metrics between the two automations. Each metric should be in exactly one automation. If both automations send `step_count`, the last sync wins and may overwrite the correct hourly value with a wrong minute-redistributed one.
 
 ## Web Dashboard
 
