@@ -94,6 +94,8 @@ All configuration is via environment variables in `docker-compose.yml`:
 
 You need **two automations** in [Health Auto Export](https://www.healthyapps.dev) with different Time Grouping, both sending to filtered endpoints. The server automatically keeps only the right metric types from each endpoint — no manual metric selection needed.
 
+Ready-to-import automation files are in the [`automations/`](automations/) folder. Open each file on your iPhone, it will import into Health Auto Export. Then edit the URL and API key to match your server.
+
 ### Automation 1 — Hourly (activity & sleep)
 
 1. Open **Health Auto Export** → **Automations** → **Create new**
