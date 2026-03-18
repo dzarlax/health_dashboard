@@ -239,6 +239,15 @@ func extractPoints(metricName, units string, raw json.RawMessage) []storage.Metr
 			TotalSleep float64 `json:"totalSleep"`
 		}
 		if json.Unmarshal(raw, &p) == nil {
+			// Cap sleep values at physiological maximums to guard against
+			// cumulative/inflated summaries from source apps (e.g. Health Auto Export + RingConn).
+			const maxTotal = 14.0 // hours — extreme upper bound for a single night
+			const maxPhase = 10.0 // hours — no single phase should exceed this
+			p.Deep = capSleep(p.Deep, maxPhase)
+			p.REM = capSleep(p.REM, maxPhase)
+			p.Core = capSleep(p.Core, maxPhase)
+			p.Awake = capSleep(p.Awake, maxPhase)
+			p.TotalSleep = capSleep(p.TotalSleep, maxTotal)
 			return []storage.MetricPoint{
 				{MetricName: "sleep_deep",  Units: "hr", Date: base.Date, Qty: p.Deep,       Source: base.Source},
 				{MetricName: "sleep_rem",   Units: "hr", Date: base.Date, Qty: p.REM,        Source: base.Source},
@@ -251,4 +260,16 @@ func extractPoints(metricName, units string, raw json.RawMessage) []storage.Metr
 	var p struct{ Qty float64 `json:"qty"` }
 	json.Unmarshal(raw, &p)
 	return []storage.MetricPoint{pt(metricName, p.Qty)}
+}
+
+// capSleep returns v capped at max; negative values become 0.
+func capSleep(v, max float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > max {
+		log.Printf("[WARN] sleep value %.2f exceeds cap %.0f h, capping", v, max)
+		return max
+	}
+	return v
 }

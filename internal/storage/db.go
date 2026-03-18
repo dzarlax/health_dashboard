@@ -276,11 +276,22 @@ func (s *DB) Insert(r Record, points []MetricPoint) (int64, error) {
 		return 0, err
 	}
 
+	// For sleep midnight summaries: allow upward corrections up to +30%,
+	// but block larger jumps that indicate Health Auto Export accumulation bug.
+	// This lets partial→full sync through (e.g. 6.3→7.3 = +16%)
+	// while blocking accumulation (e.g. 7.3→10.8 = +48%).
 	stmt, err := tx.Prepare(`INSERT INTO metric_points
 		(health_record_id, metric_name, units, date, qty, source)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(metric_name, date, source) DO UPDATE SET
-			qty = excluded.qty,
+			qty = CASE
+				WHEN metric_points.metric_name LIKE 'sleep_%'
+				  AND substr(metric_points.date, 12, 8) = '00:00:00'
+				  AND metric_points.qty > 1.0
+				  AND excluded.qty > metric_points.qty * 1.3
+				THEN metric_points.qty
+				ELSE excluded.qty
+			END,
 			units = excluded.units,
 			health_record_id = excluded.health_record_id`)
 	if err != nil {

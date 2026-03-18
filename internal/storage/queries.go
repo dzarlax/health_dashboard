@@ -400,6 +400,7 @@ func (s *DB) metricDataBySourceRaw(metric, from, to, bucket, aggFunc string) ([]
 	query := "SELECT " + bucketExpr + " as bucket, " + normSource + " as src, " + aggFunc + `(qty), MIN(qty), MAX(qty)
 		FROM metric_points
 		WHERE metric_name = ? AND date >= ? AND date <= ? AND qty > 0
+		` + sleepDedupClause(metric) + `
 		GROUP BY bucket, src
 		ORDER BY bucket, src`
 	return s.scanSourcePoints(query, metric, from, to)
